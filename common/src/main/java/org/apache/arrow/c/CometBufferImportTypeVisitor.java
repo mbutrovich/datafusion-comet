@@ -28,28 +28,8 @@ import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.util.AutoCloseables;
 import org.apache.arrow.util.VisibleForTesting;
-import org.apache.arrow.vector.DateDayVector;
-import org.apache.arrow.vector.DateMilliVector;
-import org.apache.arrow.vector.DurationVector;
-import org.apache.arrow.vector.Float4Vector;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.IntervalDayVector;
-import org.apache.arrow.vector.IntervalMonthDayNanoVector;
-import org.apache.arrow.vector.IntervalYearVector;
-import org.apache.arrow.vector.LargeVarBinaryVector;
-import org.apache.arrow.vector.LargeVarCharVector;
-import org.apache.arrow.vector.TimeMicroVector;
-import org.apache.arrow.vector.TimeMilliVector;
-import org.apache.arrow.vector.TimeNanoVector;
-import org.apache.arrow.vector.TimeSecVector;
-import org.apache.arrow.vector.TimeStampVector;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.complex.DenseUnionVector;
-import org.apache.arrow.vector.complex.LargeListVector;
-import org.apache.arrow.vector.complex.ListVector;
-import org.apache.arrow.vector.complex.MapVector;
-import org.apache.arrow.vector.complex.UnionVector;
+import org.apache.arrow.vector.*;
+import org.apache.arrow.vector.complex.*;
 import org.apache.arrow.vector.ipc.message.ArrowFieldNode;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.util.DataSizeRoundingUtil;
@@ -200,6 +180,11 @@ class CometBufferImportTypeVisitor
   }
 
   @Override
+  public List<ArrowBuf> visit(ArrowType.RunEndEncoded type) {
+    return List.of();
+  }
+
+  @Override
   public List<ArrowBuf> visit(ArrowType.Map type) {
     return Arrays.asList(maybeImportBitmap(type), importOffsets(type, MapVector.OFFSET_WIDTH));
   }
@@ -248,6 +233,41 @@ class CometBufferImportTypeVisitor
     }
   }
 
+  private List<ArrowBuf> visitVariableWidthView(ArrowType type) {
+    final int viewBufferIndex = 1;
+    final int variadicSizeBufferIndex = this.buffers.length - 1;
+    final long numOfVariadicBuffers = this.buffers.length - 3L;
+    final long variadicSizeBufferCapacity = numOfVariadicBuffers * Long.BYTES;
+    List<ArrowBuf> buffers = new ArrayList<>();
+
+    // TODO: Figure out the offset hack for this visit function.
+
+    ArrowBuf variadicSizeBuffer =
+        importBuffer(type, variadicSizeBufferIndex, variadicSizeBufferCapacity);
+
+    ArrowBuf view =
+        importFixedBytes(type, viewBufferIndex, BaseVariableWidthViewVector.ELEMENT_SIZE);
+    buffers.add(maybeImportBitmap(type));
+    buffers.add(view);
+
+    // 0th buffer is validity buffer
+    // 1st buffer is view buffer
+    // 2nd buffer onwards are variadic buffer
+    // N-1 (this.buffers.length - 1) buffer is variadic size buffer
+    final int variadicBufferReadOffset = 2;
+    for (int i = 0; i < numOfVariadicBuffers; i++) {
+      long size = variadicSizeBuffer.getLong((long) i * Long.BYTES);
+      buffers.add(importBuffer(type, i + variadicBufferReadOffset, size));
+    }
+
+    return buffers;
+  }
+
+  @Override
+  public List<ArrowBuf> visit(ArrowType.Utf8View type) {
+    return visitVariableWidthView(type);
+  }
+
   @Override
   public List<ArrowBuf> visit(ArrowType.LargeUtf8 type) {
     try (ArrowBuf offsets = importOffsets(type, LargeVarCharVector.OFFSET_WIDTH)) {
@@ -291,6 +311,11 @@ class CometBufferImportTypeVisitor
       offsets.getReferenceManager().retain();
       return Arrays.asList(maybeImportBitmap(type), offsets, importData(type, len));
     }
+  }
+
+  @Override
+  public List<ArrowBuf> visit(ArrowType.BinaryView type) {
+    return visitVariableWidthView(type);
   }
 
   @Override
@@ -394,5 +419,21 @@ class CometBufferImportTypeVisitor
   public List<ArrowBuf> visit(ArrowType.Duration type) {
     return Arrays.asList(
         maybeImportBitmap(type), importFixedBytes(type, 1, DurationVector.TYPE_WIDTH));
+  }
+
+  @Override
+  public List<ArrowBuf> visit(ArrowType.ListView type) {
+    return Arrays.asList(
+        maybeImportBitmap(type),
+        importFixedBytes(type, 1, ListViewVector.OFFSET_WIDTH),
+        importFixedBytes(type, 2, ListViewVector.SIZE_WIDTH));
+  }
+
+  @Override
+  public List<ArrowBuf> visit(ArrowType.LargeListView type) {
+    return Arrays.asList(
+        maybeImportBitmap(type),
+        importFixedBytes(type, 1, LargeListViewVector.OFFSET_WIDTH),
+        importFixedBytes(type, 2, LargeListViewVector.SIZE_WIDTH));
   }
 }
