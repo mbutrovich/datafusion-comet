@@ -92,6 +92,8 @@ object Utils {
     case float: ArrowType.FloatingPoint if float.getPrecision == FloatingPointPrecision.DOUBLE =>
       DoubleType
     case ArrowType.Utf8.INSTANCE => StringType
+    case ArrowType.Utf8View.INSTANCE => StringType
+    case ArrowType.BinaryView.INSTANCE => BinaryType
     case ArrowType.Binary.INSTANCE => BinaryType
     case _: ArrowType.FixedSizeBinary => BinaryType
     case d: ArrowType.Decimal => DecimalType(d.getPrecision, d.getScale)
