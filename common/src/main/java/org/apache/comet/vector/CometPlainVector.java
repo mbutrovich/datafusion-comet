@@ -135,7 +135,7 @@ public class CometPlainVector extends CometDecodedVector {
   @Override
   public UTF8String getUTF8String(int rowId) {
     switch (vectorType) {
-      case BaseFixedWidthVector:
+      case BaseVariableWidthVector:
         {
           BaseVariableWidthVector varWidthVector = (BaseVariableWidthVector) valueVector;
           long offsetBufferAddress = varWidthVector.getOffsetBuffer().memoryAddress();
@@ -143,7 +143,7 @@ public class CometPlainVector extends CometDecodedVector {
           int length = Platform.getInt(null, offsetBufferAddress + (rowId + 1L) * 4L) - offset;
           return UTF8String.fromAddress(null, valueBufferAddress + offset, length);
         }
-      case BaseVariableWidthVector:
+      case BaseFixedWidthVector:
         {
           BaseFixedWidthVector fixedWidthVector = (BaseFixedWidthVector) valueVector;
           int length = fixedWidthVector.getTypeWidth();
