@@ -1081,8 +1081,10 @@ class CometCastSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   // therefore not supported by operations using it.
   private def generateTimestampsExtended(): DataFrame = {
     val values = Seq("290000-12-31T01:00:00+02:00")
-    generateTimestamps().unionByName(
+    val thing = generateTimestamps().unionByName(
       values.toDF("str").select(col("str").cast(DataTypes.TimestampType).as("a")))
+    println(thing.collect().mkString("Array(", ", ", ")"))
+    thing
   }
 
   private def generateTimestamps(): DataFrame = {

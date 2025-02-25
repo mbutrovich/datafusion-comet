@@ -473,6 +473,7 @@ impl<'a> Stream for ScanStream<'a> {
             InputBatch::Batch(columns, num_rows) => {
                 self.baseline_metrics.record_output(*num_rows);
                 let maybe_batch = self.build_record_batch(columns, *num_rows);
+                println!["{:?}", maybe_batch.as_ref().unwrap()];
                 Poll::Ready(Some(maybe_batch))
             }
         };

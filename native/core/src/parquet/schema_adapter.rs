@@ -181,6 +181,8 @@ impl SchemaMapper for SchemaMapping {
         let batch_rows = batch.num_rows();
         let batch_cols = batch.columns().to_vec();
 
+        println!["map_batch: {:?}", batch];
+
         let cols = self
             .required_schema
             // go through each field in the projected schema
@@ -226,6 +228,8 @@ impl SchemaMapper for SchemaMapping {
     fn map_partial_batch(&self, batch: RecordBatch) -> datafusion_common::Result<RecordBatch> {
         let batch_cols = batch.columns().to_vec();
         let schema = batch.schema();
+
+        println!["map_partial_batch {:?}", batch];
 
         // for each field in the batch's schema (which is based on a file, not a table)...
         let (cols, fields) = schema
