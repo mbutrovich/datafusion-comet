@@ -34,14 +34,14 @@ edition = "2021"
 rust-version = "1.85"
 
 [workspace.dependencies]
-arrow = { version = "54.2.0", features = ["prettyprint", "ffi", "chrono-tz"] }
-arrow-array = { version = "54.2.0" }
-arrow-buffer = { version = "54.2.0" }
-arrow-data = { version = "54.2.0" }
-arrow-schema = { version = "54.2.0" }
+arrow = { version = "54.2.1", features = ["prettyprint", "ffi", "chrono-tz"] }
+arrow-array = { version = "54.2.1" }
+arrow-buffer = { version = "54.2.1" }
+arrow-data = { version = "54.2.1" }
+arrow-schema = { version = "54.2.1" }
 async-trait = { version = "0.1" }
 bytes = { version = "1.10.0" }
-parquet = { version = "54.2.0", default-features = false, features = ["experimental"] }
+parquet = { version = "54.2.1", default-features = false, features = ["experimental"] }
 datafusion = { version = "46.0.0", default-features = false, features = ["unicode_expressions", "crypto_expressions"] }
 datafusion-common = { version = "46.0.0", default-features = false }
 datafusion-datasource = { version = "46.0.0", default-features = false }
@@ -69,3 +69,23 @@ overflow-checks = false
 lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
+
+[patch.crates-io]
+arrow = { path = '/Users/matt/git/arrow-rs/arrow' }
+arrow-array = { path = '/Users/matt/git/arrow-rs/arrow-array' }
+arrow-buffer = { path = '/Users/matt/git/arrow-rs/arrow-buffer' }
+arrow-data = { path = '/Users/matt/git/arrow-rs/arrow-data' }
+arrow-ipc = { path = '/Users/matt/git/arrow-rs/arrow-ipc' }
+arrow-schema = { path = '/Users/matt/git/arrow-rs/arrow-schema' }
+arrow-select = { path = '/Users/matt/git/arrow-rs/arrow-select' }
+arrow-ord = { path = '/Users/matt/git/arrow-rs/arrow-ord' }
+datafusion = { path = '/Users/matt/git/datafusion/datafusion/core' }
+datafusion-common = { path = '/Users/matt/git/datafusion/datafusion/common' }
+datafusion-functions = { path = '/Users/matt/git/datafusion/datafusion/functions' }
+datafusion-functions-nested = { path = '/Users/matt/git/datafusion/datafusion/functions-nested' }
+datafusion-expr = { path = '/Users/matt/git/datafusion/datafusion/expr' }
+datafusion-expr-common = { path = '/Users/matt/git/datafusion/datafusion/expr-common' }
+datafusion-execution = { path = '/Users/matt/git/datafusion/datafusion/execution' }
+datafusion-physical-plan = { path = '/Users/matt/git/datafusion/datafusion/physical-plan' }
+datafusion-physical-expr = { path = '/Users/matt/git/datafusion/datafusion/physical-expr' }
+parquet = { path = '/Users/matt/git/arrow-rs/parquet' }

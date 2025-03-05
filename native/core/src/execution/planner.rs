@@ -1178,6 +1178,7 @@ impl PhysicalPlanner {
             }
             OpStruct::NativeScan(scan) => {
                 let data_schema = convert_spark_types_to_arrow_schema(scan.data_schema.as_slice());
+                println!["data_schema: {}", data_schema];
                 let required_schema: SchemaRef =
                     convert_spark_types_to_arrow_schema(scan.required_schema.as_slice());
                 let partition_schema: SchemaRef =
@@ -1188,6 +1189,8 @@ impl PhysicalPlanner {
                     .map(|offset| *offset as usize)
                     .collect();
 
+                println!["required_schema: {}", required_schema];
+                println!["partition_schema: {}", partition_schema];
                 // Convert the Spark expressions to Physical expressions
                 let data_filters: Result<Vec<Arc<dyn PhysicalExpr>>, ExecutionError> = scan
                     .data_filters
