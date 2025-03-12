@@ -22,7 +22,7 @@ use arrow::{
     util::display::FormatOptions,
 };
 use arrow_array::{DictionaryArray, StructArray};
-use arrow_schema::DataType;
+use arrow_schema::{DataType, TimeUnit};
 use datafusion::prelude::SessionContext;
 use datafusion_comet_spark_expr::utils::array_with_timezone;
 use datafusion_comet_spark_expr::EvalMode;
@@ -121,10 +121,10 @@ fn cast_array(
     parquet_options: &SparkParquetOptions,
 ) -> DataFusionResult<ArrayRef> {
     use DataType::*;
-    let array = match to_type {
-        Timestamp(_, None) => array, // array_with_timezone does not support to_type of NTZ.
-        _ => array_with_timezone(array, parquet_options.timezone.clone(), Some(to_type))?,
-    };
+    // let array = match to_type {
+    //     Timestamp(_, None) => array, // array_with_timezone does not support to_type of NTZ.
+    //     _ => array_with_timezone(array, parquet_options.timezone.clone(), Some(to_type))?,
+    // };
     let from_type = array.data_type().clone();
 
     let array = match &from_type {

@@ -220,6 +220,9 @@ impl SchemaMapper for SchemaMapping {
 
         let schema = Arc::<Schema>::clone(&self.required_schema);
         let record_batch = RecordBatch::try_new_with_options(schema, cols, &options)?;
+
+        println!["record_batch: {:?}", record_batch];
+
         Ok(record_batch)
     }
 

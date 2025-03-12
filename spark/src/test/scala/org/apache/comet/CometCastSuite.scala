@@ -901,7 +901,7 @@ class CometCastSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
   test("cast TimestampType to LongType") {
     // https://github.com/apache/datafusion-comet/issues/1441
-    assume(!CometConf.isExperimentalNativeScan)
+//    assume(!CometConf.isExperimentalNativeScan)
     assume(CometSparkSessionExtensions.isSpark33Plus)
     castTest(generateTimestampsExtended(), DataTypes.LongType)
   }
@@ -926,13 +926,13 @@ class CometCastSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
   test("cast TimestampType to StringType") {
     // https://github.com/apache/datafusion-comet/issues/1441
-    assume(!CometConf.isExperimentalNativeScan)
+//    assume(!CometConf.isExperimentalNativeScan)
     castTest(generateTimestamps(), DataTypes.StringType)
   }
 
   test("cast TimestampType to DateType") {
     // https://github.com/apache/datafusion-comet/issues/1441
-    assume(!CometConf.isExperimentalNativeScan)
+//    assume(!CometConf.isExperimentalNativeScan)
     castTest(generateTimestamps(), DataTypes.DateType)
   }
 
@@ -1260,7 +1260,7 @@ class CometCastSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
   private def roundtripParquet(df: DataFrame, tempDir: File): DataFrame = {
     val filename = new File(tempDir, s"castTest_${System.currentTimeMillis()}.parquet").toString
-    df.write.mode(SaveMode.Overwrite).parquet(filename)
+    df.coalesce(1).write.mode(SaveMode.Overwrite).parquet(filename)
     spark.read.parquet(filename)
   }
 
