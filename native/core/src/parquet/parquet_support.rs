@@ -21,10 +21,10 @@ use arrow::{
     compute::{cast_with_options, take, CastOptions},
     util::display::FormatOptions,
 };
+use arrow_array::types::TimestampMicrosecondType;
 use arrow_array::{DictionaryArray, StructArray};
 use arrow_schema::{DataType, TimeUnit};
 use datafusion::prelude::SessionContext;
-use datafusion_comet_spark_expr::utils::array_with_timezone;
 use datafusion_comet_spark_expr::EvalMode;
 use datafusion_common::{Result as DataFusionResult, ScalarValue};
 use datafusion_execution::object_store::ObjectStoreUrl;
@@ -152,6 +152,11 @@ fn cast_array(
     };
     let from_type = array.data_type();
 
+    println!["from_type: {:?}", from_type];
+    println!["to_type: {:?}", to_type];
+
+    let tz = Some(Arc::new("UTC"));
+
     match (from_type, to_type) {
         (Struct(_), Struct(_)) => Ok(cast_struct_to_struct(
             array.as_struct(),
@@ -159,6 +164,17 @@ fn cast_array(
             to_type,
             parquet_options,
         )?),
+        (Timestamp(TimeUnit::Microsecond, None), Timestamp(TimeUnit::Microsecond, Some(tz))) => {
+            println!["HELLO WORLD"];
+            Ok(Arc::new(
+                array
+                    .as_primitive::<TimestampMicrosecondType>()
+                    .reinterpret_cast::<TimestampMicrosecondType>()
+                    .with_timezone(tz.clone()),
+            ))
+            // Ok(Arc::new(array.as_primitive::<TimestampMicrosecondArray>().reinterpret_cast::<TimestampMicrosecondArray>().with_timezone(tz.clone())))
+            // Ok(cast_with_options(&array, to_type, &PARQUET_OPTIONS)?)
+        }
         _ => Ok(cast_with_options(&array, to_type, &PARQUET_OPTIONS)?),
     }
 }
