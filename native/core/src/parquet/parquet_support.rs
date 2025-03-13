@@ -23,10 +23,7 @@ use arrow::{
 };
 use arrow_array::types::TimestampMicrosecondType;
 use arrow_array::{DictionaryArray, StructArray};
-use arrow_schema::DataType;
-use datafusion_comet_spark_expr::utils::array_with_timezone;
 use arrow_schema::{DataType, TimeUnit};
-use datafusion::prelude::SessionContext;
 use datafusion_comet_spark_expr::EvalMode;
 use datafusion_common::{Result as DataFusionResult, ScalarValue};
 use datafusion_execution::object_store::ObjectStoreUrl;
@@ -281,7 +278,6 @@ pub(crate) fn prepare_object_store(
 
 #[cfg(test)]
 mod tests {
-    use crate::execution::operators::ExecutionError;
     use crate::parquet::parquet_support::prepare_object_store;
     use datafusion_execution::object_store::ObjectStoreUrl;
     use datafusion_execution::runtime_env::RuntimeEnv;
