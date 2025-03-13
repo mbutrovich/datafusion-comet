@@ -100,10 +100,6 @@ impl SchemaAdapter for SparkSchemaAdapter {
         &self,
         file_schema: &Schema,
     ) -> datafusion_common::Result<(Arc<dyn SchemaMapper>, Vec<usize>)> {
-        println!["schema_adapter file_schema: {:?}", file_schema];
-        println!["schema_adapter table_schema: {:?}", self.table_schema];
-        println!["schema_adapter required_schema: {:?}", self.required_schema];
-
         let mut projection = Vec::with_capacity(file_schema.fields().len());
         let mut field_mappings = vec![None; self.required_schema.fields().len()];
 
@@ -185,8 +181,6 @@ impl SchemaMapper for SchemaMapping {
         let batch_rows = batch.num_rows();
         let batch_cols = batch.columns().to_vec();
 
-        println!["batch: {:?}", batch];
-
         let cols = self
             .required_schema
             // go through each field in the projected schema
@@ -220,9 +214,6 @@ impl SchemaMapper for SchemaMapping {
 
         let schema = Arc::<Schema>::clone(&self.required_schema);
         let record_batch = RecordBatch::try_new_with_options(schema, cols, &options)?;
-
-        println!["record_batch: {:?}", record_batch];
-
         Ok(record_batch)
     }
 

@@ -1260,7 +1260,7 @@ class CometCastSuite extends CometTestBase with AdaptiveSparkPlanHelper {
 
   private def roundtripParquet(df: DataFrame, tempDir: File): DataFrame = {
     val filename = new File(tempDir, s"castTest_${System.currentTimeMillis()}.parquet").toString
-    df.coalesce(1).write.mode(SaveMode.Overwrite).parquet(filename)
+    df.write.mode(SaveMode.Overwrite).parquet(filename)
     spark.read.parquet(filename)
   }
 
