@@ -22,11 +22,9 @@ package org.apache.spark.sql.comet.util
 import java.io.{DataInputStream, DataOutputStream, File}
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
-
 import scala.collection.JavaConverters._
-
 import org.apache.arrow.c.CDataDictionaryProvider
-import org.apache.arrow.vector.{BigIntVector, BitVector, DateDayVector, DecimalVector, FieldVector, FixedSizeBinaryVector, Float4Vector, Float8Vector, IntVector, SmallIntVector, TimeStampMicroTZVector, TimeStampMicroVector, TinyIntVector, ValueVector, VarBinaryVector, VarCharVector, VectorSchemaRoot}
+import org.apache.arrow.vector.{BigIntVector, BitVector, DateDayVector, DecimalVector, FieldVector, FixedSizeBinaryVector, Float4Vector, Float8Vector, IntVector, SmallIntVector, TimeStampMicroTZVector, TimeStampMicroVector, TinyIntVector, ValueVector, VarBinaryVector, VarCharVector, VectorSchemaRoot, ViewVarBinaryVector, ViewVarCharVector}
 import org.apache.arrow.vector.complex.{ListVector, MapVector, StructVector}
 import org.apache.arrow.vector.dictionary.DictionaryProvider
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
@@ -38,7 +36,6 @@ import org.apache.spark.sql.comet.execution.arrow.ArrowReaderIterator
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.io.{ChunkedByteBuffer, ChunkedByteBufferOutputStream}
-
 import org.apache.comet.vector.CometVector
 
 object Utils {
@@ -92,6 +89,8 @@ object Utils {
     case float: ArrowType.FloatingPoint if float.getPrecision == FloatingPointPrecision.DOUBLE =>
       DoubleType
     case ArrowType.Utf8.INSTANCE => StringType
+    case ArrowType.Utf8View.INSTANCE => StringType
+    case ArrowType.BinaryView.INSTANCE => BinaryType
     case ArrowType.Binary.INSTANCE => BinaryType
     case _: ArrowType.FixedSizeBinary => BinaryType
     case d: ArrowType.Decimal => DecimalType(d.getPrecision, d.getScale)
@@ -278,7 +277,7 @@ object Utils {
           _: BigIntVector | _: Float4Vector | _: Float8Vector | _: VarCharVector |
           _: DecimalVector | _: DateDayVector | _: TimeStampMicroTZVector | _: VarBinaryVector |
           _: FixedSizeBinaryVector | _: TimeStampMicroVector | _: StructVector | _: ListVector |
-          _: MapVector) =>
+          _: MapVector | _: ViewVarCharVector | _: ViewVarBinaryVector) =>
         v.asInstanceOf[FieldVector]
       case _ =>
         throw new SparkException(s"Unsupported Arrow Vector for $reason: ${valueVector.getClass}")
