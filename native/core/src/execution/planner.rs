@@ -684,7 +684,7 @@ impl PhysicalPlanner {
                     self.create_expr(expr.left.as_ref().unwrap(), Arc::clone(&input_schema))?;
                 let right = self.create_expr(expr.right.as_ref().unwrap(), input_schema)?;
                 match right.as_any().downcast_ref::<Literal>().unwrap().value() {
-                    ScalarValue::Utf8(Some(pattern)) => {
+                    ScalarValue::Utf8View(Some(pattern)) => {
                         Ok(Arc::new(RLike::try_new(left, pattern)?))
                     }
                     _ => Err(GeneralError(
