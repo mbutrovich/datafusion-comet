@@ -416,12 +416,12 @@ impl PhysicalPlanner {
                         DataType::Int64 => ScalarValue::Int64(None),
                         DataType::Float32 => ScalarValue::Float32(None),
                         DataType::Float64 => ScalarValue::Float64(None),
-                        DataType::Utf8 => ScalarValue::Utf8(None),
+                        DataType::Utf8 => ScalarValue::Utf8View(None),
                         DataType::Date32 => ScalarValue::Date32(None),
                         DataType::Timestamp(TimeUnit::Microsecond, timezone) => {
                             ScalarValue::TimestampMicrosecond(None, timezone)
                         }
-                        DataType::Binary => ScalarValue::Binary(None),
+                        DataType::Binary => ScalarValue::BinaryView(None),
                         DataType::Decimal128(p, s) => ScalarValue::Decimal128(None, p, s),
                         DataType::Struct(fields) => ScalarStructBuilder::new_null(fields),
                         DataType::Map(f, s) => DataType::Map(f, s).try_into()?,
@@ -461,8 +461,8 @@ impl PhysicalPlanner {
                         },
                         Value::FloatVal(value) => ScalarValue::Float32(Some(*value)),
                         Value::DoubleVal(value) => ScalarValue::Float64(Some(*value)),
-                        Value::StringVal(value) => ScalarValue::Utf8(Some(value.clone())),
-                        Value::BytesVal(value) => ScalarValue::Binary(Some(value.clone())),
+                        Value::StringVal(value) => ScalarValue::Utf8View(Some(value.clone())),
+                        Value::BytesVal(value) => ScalarValue::BinaryView(Some(value.clone())),
                         Value::DecimalVal(value) => {
                             let big_integer = BigInt::from_signed_bytes_be(value);
                             let integer = big_integer.to_i128().ok_or_else(|| {
