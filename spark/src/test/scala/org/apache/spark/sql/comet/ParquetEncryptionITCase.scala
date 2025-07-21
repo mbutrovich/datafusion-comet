@@ -49,7 +49,7 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
   private val key2 = encoder.encodeToString("1234567890123451".getBytes(StandardCharsets.UTF_8))
 
   test("SPARK-34990: Write and read an encrypted parquet") {
-    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() == CometConf.SCAN_NATIVE_COMET)
+//    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() == CometConf.SCAN_NATIVE_COMET)
 
     import testImplicits._
 
@@ -92,7 +92,7 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
   }
 
   test("SPARK-37117: Can't read files in Parquet encryption external key material mode") {
-    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() == CometConf.SCAN_NATIVE_COMET)
+//    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() == CometConf.SCAN_NATIVE_COMET)
 
     import testImplicits._
 
@@ -149,7 +149,7 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
         withSQLConf(
           CometConf.COMET_ENABLED.key -> cometEnabled,
           CometConf.COMET_EXEC_ENABLED.key -> "true",
-          SQLConf.ANSI_ENABLED.key -> "true") {
+          SQLConf.ANSI_ENABLED.key -> "false") {
           testFun
         }
       }
