@@ -19,7 +19,7 @@ use crate::execution::operators::ExecutionError;
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkSchemaAdapterFactory;
 use arrow::datatypes::{Field, SchemaRef};
-use datafusion::config::TableParquetOptions;
+use datafusion::config::{ConfigFileDecryptionProperties, TableParquetOptions};
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{
     FileGroup, FileScanConfigBuilder, FileSource, ParquetSource,
@@ -33,6 +33,7 @@ use datafusion_comet_spark_expr::EvalMode;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
+use parquet::encryption::decrypt::FileDecryptionProperties;
 
 /// Initializes a DataSourceExec plan with a ParquetSource. This may be used by either the
 /// `native_datafusion` scan or the `native_iceberg_compat` scan.
@@ -130,6 +131,19 @@ fn get_options(
     table_parquet_options.global.pushdown_filters = true;
     table_parquet_options.global.reorder_filters = true;
     table_parquet_options.global.coerce_int96 = Some("us".to_string());
+
+    let footer_key = b"0123456789012345".to_vec();
+    let column_1_key = b"1234567890123450".to_vec();
+    let column_2_key = b"1234567890123451".to_vec();
+
+    let decryption_properties = FileDecryptionProperties::builder(footer_key)
+        .with_column_key("double_field", column_1_key)
+        .with_column_key("float_field", column_2_key)
+        .build()
+        .unwrap();
+
+    table_parquet_options.crypto.file_decryption = Some(ConfigFileDecryptionProperties::from(&decryption_properties));
+
     let mut spark_parquet_options =
         SparkParquetOptions::new(EvalMode::Legacy, session_timezone, false);
     spark_parquet_options.allow_cast_unsigned_ints = true;
