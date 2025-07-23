@@ -83,6 +83,9 @@ abstract class CometTestBase
     conf.set(CometConf.COMET_SPARK_TO_ARROW_ENABLED.key, "true")
     conf.set(CometConf.COMET_NATIVE_SCAN_ENABLED.key, "true")
     conf.set(CometConf.COMET_EXPLAIN_NATIVE_ENABLED.key, "true")
+    conf.set(CometConf.COMET_EXPLAIN_VERBOSE_ENABLED.key, "true")
+    conf.set(CometConf.COMET_EXPLAIN_FALLBACK_ENABLED.key, "true")
+    conf.set(CometConf.COMET_EXPLAIN_TRANSFORMATIONS.key, "true")
     // set the scan impl to SCAN_NATIVE_COMET because many tests are implemented
     // with the assumption that this is the default and would need updating if we
     // change the default

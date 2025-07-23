@@ -137,10 +137,13 @@ fn get_options(
     let column_2_key = b"1234567890123451".to_vec();
 
     let decryption_properties = FileDecryptionProperties::builder(footer_key)
-        .with_column_key("double_field", column_1_key)
-        .with_column_key("float_field", column_2_key)
+        .with_column_key("a", column_1_key.clone())
+        .with_column_key("b", column_1_key)
+        .with_column_key("c", column_2_key)
         .build()
         .unwrap();
+
+    println!("{:?}", decryption_properties.footer_key(None));
 
     table_parquet_options.crypto.file_decryption = Some(ConfigFileDecryptionProperties::from(&decryption_properties));
 

@@ -53,6 +53,8 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
 
     import testImplicits._
 
+    println("0123456789012345".getBytes(StandardCharsets.UTF_8).mkString("Array(", ", ", ")"))
+
     Seq("org.apache.parquet.crypto.keytools.PropertiesDrivenCryptoFactory").foreach {
       factoryClass =>
         withTempDir { dir =>
@@ -80,6 +82,8 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
             val parquetDF = spark.read.parquet(parquetDir)
             assert(parquetDF.inputFiles.nonEmpty)
             val readDataset = parquetDF.select("a", "b", "c")
+
+            println(readDataset.explain(true))
 
             if (CometConf.COMET_ENABLED.get(conf)) {
               checkSparkAnswerAndOperator(readDataset)
@@ -121,6 +125,8 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
             val parquetDF = spark.read.parquet(parquetDir)
             assert(parquetDF.inputFiles.nonEmpty)
             val readDataset = parquetDF.select("a", "b", "c")
+
+            println(readDataset.explain(true))
 
             if (CometConf.COMET_ENABLED.get(conf)) {
               checkSparkAnswerAndOperator(readDataset)
