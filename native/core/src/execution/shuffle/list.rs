@@ -24,6 +24,7 @@ use arrow::array::builder::{
     Float64Builder, Int16Builder, Int32Builder, Int64Builder, Int8Builder, ListBuilder,
     StringBuilder, StructBuilder, TimestampMicrosecondBuilder,
 };
+use arrow::array::{BinaryViewBuilder, StringViewBuilder};
 use arrow::datatypes::{DataType, TimeUnit};
 
 pub struct SparkUnsafeArray {
@@ -175,6 +176,18 @@ define_append_element!(
     |builder: &mut StringBuilder, list: &SparkUnsafeArray, idx: usize| builder
         .append_value(list.get_string(idx))
 );
+define_append_element!(
+    append_binary_view_element,
+    BinaryViewBuilder,
+    |builder: &mut BinaryViewBuilder, list: &SparkUnsafeArray, idx: usize| builder
+        .append_value(list.get_binary(idx))
+);
+define_append_element!(
+    append_string_view_element,
+    StringViewBuilder,
+    |builder: &mut StringViewBuilder, list: &SparkUnsafeArray, idx: usize| builder
+        .append_value(list.get_string(idx))
+);
 
 /// Appending the given list stored in `SparkUnsafeArray` into `ListBuilder`.
 /// `element_dt` is the data type of the list element. `list_builder` is the list builder.
@@ -271,6 +284,22 @@ pub fn append_list_element<T: ArrayBuilder>(
                     .as_any_mut()
                     .downcast_mut::<ListBuilder<StringBuilder>>()
                     .expect("ListBuilder<StringBuilder>"),
+                list,
+                idx,
+            ),
+            DataType::BinaryView => append_binary_view_element(
+                list_builder
+                    .as_any_mut()
+                    .downcast_mut::<ListBuilder<BinaryViewBuilder>>()
+                    .expect("ListBuilder<BinaryViewBuilder>"),
+                list,
+                idx,
+            ),
+            DataType::Utf8View => append_string_view_element(
+                list_builder
+                    .as_any_mut()
+                    .downcast_mut::<ListBuilder<StringViewBuilder>>()
+                    .expect("ListBuilder<StringViewBuilder>"),
                 list,
                 idx,
             ),

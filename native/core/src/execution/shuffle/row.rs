@@ -36,7 +36,7 @@ use arrow::array::{
         StructBuilder, TimestampMicrosecondBuilder,
     },
     types::Int32Type,
-    Array, ArrayRef, RecordBatch, RecordBatchOptions,
+    Array, ArrayRef, BinaryViewBuilder, RecordBatch, RecordBatchOptions, StringViewBuilder,
 };
 use arrow::compute::cast;
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -432,8 +432,16 @@ pub(crate) fn append_field(
             append_field_to_builder!(BinaryBuilder, |builder: &mut BinaryBuilder| builder
                 .append_value(row.get_binary(idx)));
         }
+        DataType::BinaryView => {
+            append_field_to_builder!(BinaryViewBuilder, |builder: &mut BinaryViewBuilder| builder
+                .append_value(row.get_binary(idx)));
+        }
         DataType::Utf8 => {
             append_field_to_builder!(StringBuilder, |builder: &mut StringBuilder| builder
+                .append_value(row.get_string(idx)));
+        }
+        DataType::Utf8View => {
+            append_field_to_builder!(StringViewBuilder, |builder: &mut StringViewBuilder| builder
                 .append_value(row.get_string(idx)));
         }
         DataType::Decimal128(p, _) => {
@@ -1017,8 +1025,14 @@ pub(crate) fn append_field(
             DataType::Binary => {
                 append_list_field_to_builder!(BinaryBuilder, field.data_type());
             }
+            DataType::BinaryView => {
+                append_list_field_to_builder!(BinaryViewBuilder, field.data_type());
+            }
             DataType::Utf8 => {
                 append_list_field_to_builder!(StringBuilder, field.data_type());
+            }
+            DataType::Utf8View => {
+                append_list_field_to_builder!(StringViewBuilder, field.data_type());
             }
             DataType::Struct(_) => {
                 append_list_field_to_builder!(StructBuilder, field.data_type());
@@ -1026,7 +1040,7 @@ pub(crate) fn append_field(
             DataType::Decimal128(_, _) => {
                 append_list_field_to_builder!(Decimal128Builder, field.data_type());
             }
-            _ => unreachable!("Unsupported data type of struct field: {:?}", dt),
+            _ => unreachable!("Unsupported data type of list field: {:?}", dt),
         },
         _ => {
             unreachable!("Unsupported data type of struct field: {:?}", dt)
@@ -1249,6 +1263,13 @@ pub(crate) fn append_columns(
                 );
             }
         }
+        DataType::Utf8View => {
+            append_column_to_builder!(
+                StringViewBuilder,
+                |builder: &mut StringViewBuilder, row: &SparkUnsafeRow, idx| builder
+                    .append_value(row.get_string(idx))
+            );
+        }
         DataType::Binary => {
             if prefer_dictionary_ratio > 1.0 {
                 append_column_to_builder!(
@@ -1264,6 +1285,13 @@ pub(crate) fn append_columns(
                         .append_value(row.get_binary(idx))
                 );
             }
+        }
+        DataType::BinaryView => {
+            append_column_to_builder!(
+                BinaryViewBuilder,
+                |builder: &mut BinaryViewBuilder, row: &SparkUnsafeRow, idx| builder
+                    .append_value(row.get_string(idx))
+            );
         }
         DataType::Date32 => {
             append_column_to_builder!(
@@ -1797,6 +1825,12 @@ pub(crate) fn append_columns(
             DataType::Utf8 => {
                 append_column_to_list_builder!(StringBuilder, field.data_type());
             }
+            DataType::BinaryView => {
+                append_column_to_list_builder!(BinaryViewBuilder, field.data_type());
+            }
+            DataType::Utf8View => {
+                append_column_to_list_builder!(StringViewBuilder, field.data_type());
+            }
             DataType::Struct(_) => {
                 append_column_to_list_builder!(StructBuilder, field.data_type());
             }
@@ -1843,6 +1877,7 @@ fn make_builders(
                 Box::new(StringBuilder::with_capacity(row_num, 1024))
             }
         }
+        DataType::Utf8View => Box::new(StringViewBuilder::with_capacity(row_num)),
         DataType::Binary => {
             if prefer_dictionary_ratio > 1.0 {
                 Box::new(BinaryDictionaryBuilder::<Int32Type>::with_capacity(
@@ -1854,6 +1889,7 @@ fn make_builders(
                 Box::new(BinaryBuilder::with_capacity(row_num, 1024))
             }
         }
+        DataType::BinaryView => Box::new(BinaryViewBuilder::with_capacity(row_num)),
         DataType::Date32 => Box::new(Date32Builder::with_capacity(row_num)),
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
             Box::new(TimestampMicrosecondBuilder::with_capacity(row_num).with_data_type(dt.clone()))
@@ -3097,8 +3133,16 @@ fn make_builders(
                     let builder = downcast_builder!(BinaryBuilder, value_builder);
                     Box::new(ListBuilder::new(*builder).with_field(value_field))
                 }
+                DataType::BinaryView => {
+                    let builder = downcast_builder!(BinaryViewBuilder, value_builder);
+                    Box::new(ListBuilder::new(*builder).with_field(value_field))
+                }
                 DataType::Utf8 => {
                     let builder = downcast_builder!(StringBuilder, value_builder);
+                    Box::new(ListBuilder::new(*builder).with_field(value_field))
+                }
+                DataType::Utf8View => {
+                    let builder = downcast_builder!(StringViewBuilder, value_builder);
                     Box::new(ListBuilder::new(*builder).with_field(value_field))
                 }
                 DataType::Struct(_) => {
