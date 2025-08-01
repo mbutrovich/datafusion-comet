@@ -417,6 +417,7 @@ impl PhysicalPlanner {
                         DataType::Float32 => ScalarValue::Float32(None),
                         DataType::Float64 => ScalarValue::Float64(None),
                         DataType::Utf8 => ScalarValue::Utf8View(None),
+                        DataType::Utf8View => ScalarValue::Utf8View(None),
                         DataType::Date32 => ScalarValue::Date32(None),
                         DataType::Timestamp(TimeUnit::Microsecond, timezone) => {
                             ScalarValue::TimestampMicrosecond(None, timezone)

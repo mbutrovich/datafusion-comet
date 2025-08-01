@@ -1034,6 +1034,7 @@ fn is_datafusion_spark_compatible(
                     | DataType::Float64
                     | DataType::Decimal128(_, _)
                     | DataType::Utf8
+                    | DataType::Utf8View
             )
         }
         DataType::Float32 | DataType::Float64 => matches!(
@@ -1058,22 +1059,33 @@ fn is_datafusion_spark_compatible(
                 | DataType::Decimal256(_, _)
                 | DataType::Utf8 // note that there can be formatting differences
         ),
-        DataType::Utf8 if allow_incompat => matches!(
+        DataType::Utf8 | DataType::Utf8View if allow_incompat => matches!(
             to_type,
-            DataType::Binary | DataType::Float32 | DataType::Float64 | DataType::Decimal128(_, _)
+            DataType::Binary
+                | DataType::BinaryView
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal128(_, _)
         ),
-        DataType::Utf8 => matches!(to_type, DataType::Binary),
-        DataType::Date32 => matches!(to_type, DataType::Utf8),
+        DataType::Utf8 | DataType::Utf8View => matches!(
+            to_type,
+            DataType::Binary | DataType::BinaryView | DataType::Utf8 | DataType::Utf8View
+        ),
+        DataType::Date32 => matches!(to_type, DataType::Utf8 | DataType::Utf8View),
         DataType::Timestamp(_, _) => {
             matches!(
                 to_type,
-                DataType::Int64 | DataType::Date32 | DataType::Utf8 | DataType::Timestamp(_, _)
+                DataType::Int64
+                    | DataType::Date32
+                    | DataType::Utf8
+                    | DataType::Utf8View
+                    | DataType::Timestamp(_, _)
             )
         }
-        DataType::Binary => {
+        DataType::Binary | DataType::BinaryView => {
             // note that this is not completely Spark compatible because
             // DataFusion only supports binary data containing valid UTF-8 strings
-            matches!(to_type, DataType::Utf8)
+            matches!(to_type, DataType::Utf8 | DataType::Utf8View)
         }
         _ => false,
     }
