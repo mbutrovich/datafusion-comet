@@ -240,7 +240,7 @@ impl FilterExec {
         let mut eq_properties = input.equivalence_properties().clone();
         let (equal_pairs, _) = collect_columns_from_predicate(predicate);
         for (lhs, rhs) in equal_pairs {
-            eq_properties.add_equal_conditions(Arc::clone(lhs), Arc::clone(rhs))?;
+            eq_properties.add_equal_conditions(Arc::clone(lhs), Arc::clone(rhs))?
         }
         // Add the columns that have only one viable value (singleton) after
         // filtering to constants.
@@ -257,7 +257,7 @@ impl FilterExec {
         // This is for statistics
         eq_properties.add_constants(constants)?;
         // This is for logical constant (for example: a = '1', then a could be marked as a constant)
-        // to do: how to deal with multiple situation to represent = (for example c1 between 0 and 0)
+        // to do: how to deal with a multiple situation to represent = (for example, c1 between 0 and 0)
         eq_properties.add_constants(Self::extend_constants(input, predicate))?;
 
         let mut output_partitioning = input.output_partitioning().clone();
