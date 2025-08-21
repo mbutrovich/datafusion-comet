@@ -16,17 +16,20 @@
 // under the License.
 
 use crate::errors::{CometError, CometResult};
-use arrow::array::RecordBatch;
-use arrow::datatypes::Schema;
+use arrow::array::{
+    Array, ArrayRef, AsArray, BinaryViewBuilder, RecordBatch, RecordBatchOptions, StringViewBuilder,
+};
+use arrow::datatypes::{DataType, Schema};
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use bytes::Buf;
 use crc32fast::Hasher;
-use datafusion::common::DataFusionError;
+use datafusion::common::{arrow_datafusion_err, DataFusionError};
 use datafusion::error::Result;
 use datafusion::physical_plan::metrics::Time;
 use simd_adler32::Adler32;
 use std::io::{Cursor, Seek, SeekFrom, Write};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum CompressionCodec {
@@ -82,6 +85,74 @@ impl ShuffleBlockWriter {
         if batch.num_rows() == 0 {
             return Ok(0);
         }
+
+        let mut compact = false;
+        batch
+            .columns()
+            .iter()
+            .for_each(|column| match column.data_type() {
+                DataType::BinaryView => {
+                    if column.get_array_memory_size() > 1048576 {
+                        compact = true;
+                    }
+                }
+                DataType::Utf8View => {
+                    if column.get_array_memory_size() > 1048576 {
+                        compact = true;
+                    }
+                }
+                _ => {}
+            });
+
+        let compact_batch: Option<RecordBatch> = if compact {
+            let vectors = batch
+                .columns()
+                .iter()
+                .map(|v| match v.data_type() {
+                    DataType::BinaryView => {
+                        let array_size = v.get_array_memory_size();
+                        let array = v.as_binary_view();
+                        let mut builder = BinaryViewBuilder::with_capacity(array.len())
+                            .with_deduplicate_strings();
+
+                        for v in array.iter() {
+                            builder.append_option(v);
+                        }
+
+                        let result = Arc::new(builder.finish()) as ArrayRef;
+                        result
+                    }
+                    DataType::Utf8View => {
+                        let array_size = v.get_array_memory_size();
+                        let array = v.as_string_view();
+                        let mut builder = StringViewBuilder::with_capacity(array.len())
+                            .with_deduplicate_strings();
+
+                        for v in array.iter() {
+                            builder.append_option(v);
+                        }
+
+                        let result = Arc::new(builder.finish()) as ArrayRef;
+                        result
+                    }
+                    _ => Arc::clone(v),
+                })
+                .collect::<Vec<ArrayRef>>();
+
+            let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
+            let maybe_batch =
+                RecordBatch::try_new_with_options(Arc::clone(&batch.schema()), vectors, &options)
+                    .map_err(|e| arrow_datafusion_err!(e))?;
+            Some(maybe_batch)
+        } else {
+            None
+        };
+
+        let batch: &RecordBatch = if compact_batch.is_some() {
+            &compact_batch.unwrap()
+        } else {
+            batch
+        };
 
         let mut timer = ipc_time.timer();
         let start_pos = output.stream_position()?;
