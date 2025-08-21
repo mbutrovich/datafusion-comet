@@ -110,7 +110,6 @@ impl ShuffleBlockWriter {
                 .iter()
                 .map(|v| match v.data_type() {
                     DataType::BinaryView => {
-                        let array_size = v.get_array_memory_size();
                         let array = v.as_binary_view();
                         let mut builder = BinaryViewBuilder::with_capacity(array.len())
                             .with_deduplicate_strings();
@@ -123,7 +122,6 @@ impl ShuffleBlockWriter {
                         result
                     }
                     DataType::Utf8View => {
-                        let array_size = v.get_array_memory_size();
                         let array = v.as_string_view();
                         let mut builder = StringViewBuilder::with_capacity(array.len())
                             .with_deduplicate_strings();
