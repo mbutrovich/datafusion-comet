@@ -42,7 +42,7 @@ trait ShimCometScanExec {
 
   def isSparkVersionAtLeast355: Boolean = {
     VersionUtils.majorMinorPatchVersion(SPARK_VERSION_SHORT) match {
-      case Some((major, minor, patch)) => (major, minor, patch) >= (3, 5, 5)
+      case Some(version) => version >= ((3, 5, 5))
       case None =>
         throw new IllegalArgumentException(s"Malformed Spark version: $SPARK_VERSION_SHORT")
     }

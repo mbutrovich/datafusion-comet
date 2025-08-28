@@ -61,6 +61,7 @@ public class Utils {
    *     instead.
    * @see <a href="https://github.com/apache/datafusion-comet/issues/2079">Comet Issue #2079</a>
    */
+  @Deprecated
   public static ColumnReader getColumnReader(
       DataType type,
       ColumnDescriptor descriptor,
