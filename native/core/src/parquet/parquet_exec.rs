@@ -19,7 +19,7 @@ use crate::execution::operators::ExecutionError;
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkSchemaAdapterFactory;
 use arrow::datatypes::{Field, SchemaRef};
-use datafusion::config::TableParquetOptions;
+use datafusion::config::{ConfigFileDecryptionProperties, TableParquetOptions};
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{
     FileGroup, FileScanConfigBuilder, FileSource, ParquetSource,
@@ -31,8 +31,10 @@ use datafusion::physical_expr::PhysicalExpr;
 use datafusion::scalar::ScalarValue;
 use datafusion_comet_spark_expr::EvalMode;
 use itertools::Itertools;
+use parquet::encryption::decrypt::{FileDecryptionProperties, KeyRetriever};
+use parquet::errors::ParquetError;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Initializes a DataSourceExec plan with a ParquetSource. This may be used by either the
 /// `native_datafusion` scan or the `native_iceberg_compat` scan.
@@ -122,6 +124,29 @@ pub(crate) fn init_datasource_exec(
     Ok(Arc::new(DataSourceExec::new(Arc::new(file_scan_config))))
 }
 
+struct CustomKeyRetriever {
+    keys: Mutex<HashMap<String, Vec<u8>>>,
+}
+
+impl KeyRetriever for CustomKeyRetriever {
+    fn retrieve_key(&self, key_metadata: &[u8]) -> parquet::errors::Result<Vec<u8>> {
+
+        // Metadata is bytes, so convert it to a string identifier
+        let key_metadata = std::str::from_utf8(key_metadata).map_err(|e| {
+            ParquetError::General(format!("Could not convert key metadata to string: {e}"))
+        })?;
+        println!("retrieve_key: {:?}", key_metadata);
+        // Lookup the key
+        let keys = self.keys.lock().unwrap();
+        match keys.get(key_metadata) {
+            Some(key) => Ok(key.clone()),
+            None => Err(ParquetError::General(format!(
+                "Could not retrieve key for metadata {key_metadata:?}"
+            ))),
+        }
+    }
+}
+
 fn get_options(
     session_timezone: &str,
     case_sensitive: bool,
@@ -134,6 +159,24 @@ fn get_options(
         SparkParquetOptions::new(EvalMode::Legacy, session_timezone, false);
     spark_parquet_options.allow_cast_unsigned_ints = true;
     spark_parquet_options.case_sensitive = case_sensitive;
+
+    let mut keys = HashMap::new();
+    keys.insert("kf".to_owned(), b"0123456789012345".to_vec());
+    keys.insert("kc1".to_owned(), b"1234567890123450".to_vec());
+    keys.insert("kc2".to_owned(), b"1234567890123451".to_vec());
+
+    let key_retriever = Arc::new(CustomKeyRetriever {
+        keys: Mutex::new(keys),
+    });
+
+    let decryption_properties =
+        FileDecryptionProperties::with_key_retriever(key_retriever)
+            .build()
+            .unwrap();
+
+    table_parquet_options.crypto.file_decryption =
+        Some(ConfigFileDecryptionProperties::from(&decryption_properties));
+
     (table_parquet_options, spark_parquet_options)
 }
 

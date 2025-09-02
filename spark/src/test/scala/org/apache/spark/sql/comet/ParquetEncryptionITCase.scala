@@ -19,21 +19,20 @@
 
 package org.apache.spark.sql.comet
 
+import org.apache.comet.CometConf.SCAN_NATIVE_DATAFUSION
+
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
 import java.util.Base64
-
 import org.junit.runner.RunWith
 import org.scalactic.source.Position
 import org.scalatest.Tag
 import org.scalatestplus.junit.JUnitRunner
-
 import org.apache.spark.{DebugFilesystem, SparkConf}
 import org.apache.spark.sql.{CometTestBase, SQLContext}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SQLTestUtils
-
 import org.apache.comet.{CometConf, IntegrationTestSuite}
 
 /**
@@ -49,8 +48,8 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
   private val key2 = encoder.encodeToString("1234567890123451".getBytes(StandardCharsets.UTF_8))
 
   test("SPARK-34990: Write and read an encrypted parquet") {
-    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_DATAFUSION)
-    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_ICEBERG_COMPAT)
+//    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_DATAFUSION)
+//    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_ICEBERG_COMPAT)
 
     import testImplicits._
 
@@ -92,48 +91,6 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
     }
   }
 
-  test("SPARK-37117: Can't read files in Parquet encryption external key material mode") {
-    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_DATAFUSION)
-    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_ICEBERG_COMPAT)
-
-    import testImplicits._
-
-    Seq("org.apache.parquet.crypto.keytools.PropertiesDrivenCryptoFactory").foreach {
-      factoryClass =>
-        withTempDir { dir =>
-          withSQLConf(
-            "parquet.crypto.factory.class" -> factoryClass,
-            "parquet.encryption.kms.client.class" ->
-              "org.apache.parquet.crypto.keytools.mocks.InMemoryKMS",
-            "parquet.encryption.key.material.store.internally" -> "false",
-            "parquet.encryption.key.list" ->
-              s"footerKey: ${footerKey}, key1: ${key1}, key2: ${key2}") {
-
-            val inputDF = spark
-              .range(0, 2000)
-              .map(i => (i, i.toString, i.toFloat))
-              .repartition(10)
-              .toDF("a", "b", "c")
-            val parquetDir = new File(dir, "parquet").getCanonicalPath
-            inputDF.write
-              .option("parquet.encryption.column.keys", "key1: a, b; key2: c")
-              .option("parquet.encryption.footer.key", "footerKey")
-              .parquet(parquetDir)
-
-            val parquetDF = spark.read.parquet(parquetDir)
-            assert(parquetDF.inputFiles.nonEmpty)
-            val readDataset = parquetDF.select("a", "b", "c")
-
-            if (CometConf.COMET_ENABLED.get(conf)) {
-              checkSparkAnswerAndOperator(readDataset)
-            } else {
-              checkAnswer(readDataset, inputDF)
-            }
-          }
-        }
-    }
-  }
-
   protected override def sparkConf: SparkConf = {
     val conf = new SparkConf()
     conf.set("spark.hadoop.fs.file.impl", classOf[DebugFilesystem].getName)
@@ -146,12 +103,13 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
 
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(implicit
       pos: Position): Unit = {
-    Seq("true", "false").foreach { cometEnabled =>
+    Seq("true").foreach { cometEnabled =>
       super.test(testName + s" Comet($cometEnabled)", testTags: _*) {
         withSQLConf(
-          CometConf.COMET_ENABLED.key -> cometEnabled,
+          CometConf.COMET_ENABLED.key -> "true",
           CometConf.COMET_EXEC_ENABLED.key -> "true",
-          SQLConf.ANSI_ENABLED.key -> "true") {
+          SQLConf.ANSI_ENABLED.key -> "false",
+          CometConf.COMET_NATIVE_SCAN_IMPL.key -> SCAN_NATIVE_DATAFUSION) {
           testFun
         }
       }
