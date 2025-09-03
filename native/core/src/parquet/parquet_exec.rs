@@ -111,6 +111,63 @@ impl KeyMaterial {
     }
 }
 
+#[derive(Debug)]
+pub struct KeyMetadata {
+    pub is_internal_storage: bool,
+    pub key_reference: Option<String>,
+    pub key_material: Option<KeyMaterial>,
+}
+
+impl KeyMetadata {
+    fn new(
+        is_internal_storage: bool,
+        key_reference: Option<String>,
+        key_material: Option<KeyMaterial>,
+    ) -> Self {
+        if is_internal_storage {
+            assert!(key_material.is_some() && key_reference.is_none());
+        } else {
+            assert!(key_material.is_none() && key_reference.is_some());
+        }
+        KeyMetadata {
+            is_internal_storage,
+            key_reference,
+            key_material,
+        }
+    }
+
+    pub fn parse(key_metadata_bytes: &[u8]) -> Result<Self, ParquetError> {
+        let metadata_str = std::str::from_utf8(key_metadata_bytes)
+            .map_err(|e| ParquetError::General(format!("Invalid UTF-8 in key metadata: {}", e)))?;
+
+        let map: HashMap<String, serde_json::Value> =
+            serde_json::from_str(metadata_str).map_err(|e| {
+                ParquetError::General(format!("Failed to parse key metadata JSON: {}", e))
+            })?;
+
+        let get_bool =
+            |key: &str| -> bool { map.get(key).and_then(|v| v.as_bool()).unwrap_or(false) };
+
+        let get_optional_string = |key: &str| -> Option<String> {
+            map.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+        };
+
+        let is_internal_storage = get_bool("internalStorage");
+
+        if is_internal_storage {
+            let key_material = KeyMaterial::parse_from_map(&map)?;
+            Ok(KeyMetadata::new(true, None, Some(key_material)))
+        } else {
+            let key_reference = get_optional_string("keyReference");
+            Ok(KeyMetadata::new(false, key_reference, None))
+        }
+    }
+
+    pub fn get_key_material(&self) -> Option<&KeyMaterial> {
+        self.key_material.as_ref()
+    }
+}
+
 /// Initializes a DataSourceExec plan with a ParquetSource. This may be used by either the
 /// `native_datafusion` scan or the `native_iceberg_compat` scan.
 ///
@@ -278,10 +335,12 @@ struct TestKeyRetriever {}
 impl KeyRetriever for TestKeyRetriever {
     /// Get a data encryption key using the metadata stored in the Parquet file.
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
-        let key_metadata = std::str::from_utf8(key_metadata)?;
-        println!("retrieve_key {:?}", key_metadata);
-        let key_material = KeyMaterial::parse(key_metadata)?;
+        let key_metadata_string = std::str::from_utf8(key_metadata)?;
+        println!("retrieve_key {:?}", key_metadata_string);
+        let key_material = KeyMaterial::parse(key_metadata_string)?;
         println!("key_material {:?}", key_material);
+        let key_metadata = KeyMetadata::parse(key_metadata);
+        println!("key_metadata {:?}", key_metadata);
         io::stdout().flush().expect("Failed to flush stdout");
 
         Ok(vec![])
