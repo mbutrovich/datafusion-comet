@@ -1466,6 +1466,7 @@ impl PhysicalPlanner {
                     default_values,
                     scan.session_timezone.as_str(),
                     scan.case_sensitive,
+                    self.session_ctx(),
                 )?;
                 Ok((
                     vec![],

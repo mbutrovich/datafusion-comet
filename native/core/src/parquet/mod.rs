@@ -778,6 +778,7 @@ pub unsafe extern "system" fn Java_org_apache_comet_parquet_Native_initRecordBat
             None,
             session_timezone.as_str(),
             case_sensitive != JNI_FALSE,
+            session_ctx,
         )?;
 
         let partition_index: usize = 0;

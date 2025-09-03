@@ -75,12 +75,12 @@ use crate::execution::spark_plan::SparkPlan;
 
 use crate::execution::tracing::{log_memory_usage, trace_begin, trace_end, with_trace};
 
+use crate::parquet::parquet_exec::{TestEncryptionFactory, ENCRYPTION_FACTORY_ID};
 use datafusion_comet_proto::spark_operator::operator::OpStruct;
 use log::info;
 use once_cell::sync::Lazy;
 #[cfg(feature = "jemalloc")]
 use tikv_jemalloc_ctl::{epoch, stats};
-use crate::parquet::parquet_exec::{TestEncryptionFactory, ENCRYPTION_FACTORY_ID};
 
 static TOKIO_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
     let mut builder = tokio::runtime::Builder::new_multi_thread();
@@ -310,10 +310,9 @@ fn prepare_datafusion_session_context(
     // they can be later referenced in configuration options, and it's possible to register
     // multiple different factories to handle different ways of encrypting Parquet.
     let encryption_factory = TestEncryptionFactory::default();
-    session_ctx.runtime_env().register_parquet_encryption_factory(
-        ENCRYPTION_FACTORY_ID,
-        Arc::new(encryption_factory),
-    );
+    session_ctx
+        .runtime_env()
+        .register_parquet_encryption_factory(ENCRYPTION_FACTORY_ID, Arc::new(encryption_factory));
 
     // Must be the last one to override existing functions with the same name
     datafusion_comet_spark_expr::register_all_comet_functions(&mut session_ctx)?;

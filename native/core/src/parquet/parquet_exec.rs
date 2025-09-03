@@ -32,6 +32,7 @@ use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::execution::parquet_encryption::EncryptionFactory;
 use datafusion::physical_expr::expressions::BinaryExpr;
 use datafusion::physical_expr::PhysicalExpr;
+use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use datafusion_comet_spark_expr::EvalMode;
 use itertools::Itertools;
@@ -77,15 +78,12 @@ pub(crate) fn init_datasource_exec(
     default_values: Option<HashMap<usize, ScalarValue>>,
     session_timezone: &str,
     case_sensitive: bool,
+    session_ctx: &Arc<SessionContext>,
 ) -> Result<Arc<DataSourceExec>, ExecutionError> {
-    println!("init_datasource_exec");
-    io::stdout().flush().expect("Failed to flush stdout");
     let (table_parquet_options, spark_parquet_options) =
         get_options(session_timezone, case_sensitive);
-    let mut parquet_source = ParquetSource::new(table_parquet_options);
 
-    println!("init_datasource_exec2");
-    io::stdout().flush().expect("Failed to flush stdout");
+    let mut parquet_source = ParquetSource::new(table_parquet_options);
 
     // Create a conjunctive form of the vector because ParquetExecBuilder takes
     // a single expression
@@ -103,8 +101,11 @@ pub(crate) fn init_datasource_exec(
         }
     }
 
-    println!("init_datasource_exec3");
-    io::stdout().flush().expect("Failed to flush stdout");
+    parquet_source = parquet_source.with_encryption_factory(
+        session_ctx
+            .runtime_env()
+            .parquet_encryption_factory(ENCRYPTION_FACTORY_ID)?,
+    );
 
     let file_source = parquet_source.with_schema_adapter_factory(Arc::new(
         SparkSchemaAdapterFactory::new(spark_parquet_options, default_values),
@@ -114,9 +115,6 @@ pub(crate) fn init_datasource_exec(
         .iter()
         .map(|files| FileGroup::new(files.clone()))
         .collect();
-
-    println!("init_datasource_exec4");
-    io::stdout().flush().expect("Failed to flush stdout");
 
     let file_scan_config = match (data_schema, projection_vector, partition_fields) {
         (Some(data_schema), Some(projection_vector), Some(partition_fields)) => {
@@ -140,12 +138,6 @@ pub(crate) fn init_datasource_exec(
         )
         .build(),
     };
-
-    println!("init_datasource_exec5");
-    io::stdout().flush().expect("Failed to flush stdout");
-
-    println!("file_scan_config: {:#?}", file_scan_config);
-    io::stdout().flush().expect("Failed to flush stdout");
 
     Ok(Arc::new(DataSourceExec::new(Arc::new(file_scan_config))))
 }
@@ -273,9 +265,9 @@ struct TestKeyRetriever {}
 impl KeyRetriever for TestKeyRetriever {
     /// Get a data encryption key using the metadata stored in the Parquet file.
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
-        println!("retrieve_key");
-        io::stdout().flush().expect("Failed to flush stdout");
         let key_metadata = std::str::from_utf8(key_metadata)?;
+        println!("retrieve_key {:?}", key_metadata);
+        io::stdout().flush().expect("Failed to flush stdout");
         let key = base64::prelude::BASE64_STANDARD
             .decode(key_metadata)
             .unwrap();
