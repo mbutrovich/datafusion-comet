@@ -41,6 +41,7 @@ use parquet::encryption::decrypt::{FileDecryptionProperties, KeyRetriever};
 use parquet::encryption::encrypt::FileEncryptionProperties;
 use rand::rand_core::OsRng;
 use rand::TryRngCore;
+use serde_json;
 use std::collections::HashMap;
 use std::io;
 use std::io::Write;
@@ -267,6 +268,8 @@ impl KeyRetriever for TestKeyRetriever {
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
         let key_metadata = std::str::from_utf8(key_metadata)?;
         println!("retrieve_key {:?}", key_metadata);
+        let map: HashMap<String, serde_json::Value> = serde_json::from_str(key_metadata).unwrap();
+        println!("map {:?}", map);
         io::stdout().flush().expect("Failed to flush stdout");
         let key = base64::prelude::BASE64_STANDARD
             .decode(key_metadata)
