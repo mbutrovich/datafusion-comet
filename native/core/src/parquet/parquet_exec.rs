@@ -19,8 +19,7 @@ use crate::execution::operators::ExecutionError;
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkSchemaAdapterFactory;
 use arrow::datatypes::{Field, SchemaRef};
-use base64::Engine;
-use datafusion::common::{extensions_options, HashSet};
+use datafusion::common::extensions_options;
 use datafusion::config::{EncryptionFactoryOptions, TableParquetOptions};
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{
@@ -39,13 +38,78 @@ use itertools::Itertools;
 use object_store::path::Path;
 use parquet::encryption::decrypt::{FileDecryptionProperties, KeyRetriever};
 use parquet::encryption::encrypt::FileEncryptionProperties;
-use rand::rand_core::OsRng;
-use rand::TryRngCore;
+use parquet::errors::ParquetError;
 use serde_json;
 use std::collections::HashMap;
 use std::io;
 use std::io::Write;
 use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub struct KeyMaterial {
+    pub is_footer_key: bool,
+    pub kms_instance_id: Option<String>,
+    pub kms_instance_url: Option<String>,
+    pub master_key_id: String,
+    pub is_double_wrapped: bool,
+    pub kek_id: Option<String>,
+    pub encoded_wrapped_kek: Option<String>,
+    pub encoded_wrapped_dek: String,
+}
+
+impl KeyMaterial {
+    pub fn parse(json_str: &str) -> Result<Self, ParquetError> {
+        let map: HashMap<String, serde_json::Value> =
+            serde_json::from_str(json_str).map_err(|e| {
+                ParquetError::General(format!("Failed to parse key material JSON: {}", e))
+            })?;
+        println!("map {:?}", map);
+        Self::parse_from_map(&map)
+    }
+
+    pub fn parse_from_map(map: &HashMap<String, serde_json::Value>) -> Result<Self, ParquetError> {
+        let get_string = |key: &str| -> Result<String, ParquetError> {
+            map.get(key)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| ParquetError::General(format!("Missing or invalid field: {}", key)))
+        };
+
+        let get_optional_string = |key: &str| -> Option<String> {
+            map.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+        };
+
+        let get_bool =
+            |key: &str| -> bool { map.get(key).and_then(|v| v.as_bool()).unwrap_or(false) };
+
+        let is_footer_key = get_bool("isFooterKey");
+        let kms_instance_id = get_optional_string("kmsInstanceID");
+        let kms_instance_url = get_optional_string("kmsInstanceURL");
+        let master_key_id = get_string("masterKeyID")?;
+        let is_double_wrapped = get_bool("doubleWrapping");
+        let kek_id = get_optional_string("keyEncryptionKeyID");
+        let encoded_wrapped_kek = get_optional_string("wrappedKEK");
+        let encoded_wrapped_dek = get_string("wrappedDEK")?;
+
+        if is_double_wrapped && (kek_id.is_none() || encoded_wrapped_kek.is_none()) {
+            return Err(ParquetError::General(
+                "Double wrapped key material requires keyEncryptionKeyID and wrappedKEK"
+                    .to_string(),
+            ));
+        }
+
+        Ok(KeyMaterial {
+            is_footer_key,
+            kms_instance_id,
+            kms_instance_url,
+            master_key_id,
+            is_double_wrapped,
+            kek_id,
+            encoded_wrapped_kek,
+            encoded_wrapped_dek,
+        })
+    }
+}
 
 /// Initializes a DataSourceExec plan with a ParquetSource. This may be used by either the
 /// `native_datafusion` scan or the `native_iceberg_compat` scan.
@@ -174,63 +238,23 @@ extensions_options! {
         pub encrypted_columns: String, default = "".to_owned()
     }
 }
-
-/// Mock implementation of an `EncryptionFactory` that stores encryption keys
-/// base64 encoded in the Parquet encryption metadata.
-/// For production use, integrating with a key-management service to encrypt
-/// data encryption keys is recommended.
 #[derive(Default, Debug)]
 pub struct TestEncryptionFactory {}
 
 /// `EncryptionFactory` is a DataFusion trait for types that generate
 /// file encryption and decryption properties.
 impl EncryptionFactory for TestEncryptionFactory {
-    /// Generate file encryption properties to use when writing a Parquet file.
-    /// The `schema` is provided so that it may be used to dynamically configure
-    /// per-column encryption keys.
-    /// The file path is also available. We don't use the path in this example,
-    /// but other implementations may want to use this to compute an
-    /// AAD prefix for the file, or to allow use of external key material
-    /// (where key metadata is stored in a JSON file alongside Parquet files).
     fn get_file_encryption_properties(
         &self,
-        options: &EncryptionFactoryOptions,
-        schema: &SchemaRef,
+        _options: &EncryptionFactoryOptions,
+        _schema: &SchemaRef,
         _file_path: &Path,
     ) -> Result<Option<FileEncryptionProperties>, DataFusionError> {
-        println!("get_file_encryption_properties");
-        io::stdout().flush().expect("Failed to flush stdout");
-        let config: EncryptionConfig = options.to_extension_options()?;
-
-        // Generate a random encryption key for this file.
-        let mut key = vec![0u8; 16];
-        OsRng.try_fill_bytes(&mut key).unwrap();
-
-        // Generate the key metadata that allows retrieving the key when reading the file.
-        let key_metadata = wrap_key(&key);
-
-        let mut builder = FileEncryptionProperties::builder(key.to_vec())
-            .with_footer_key_metadata(key_metadata.clone());
-
-        let encrypted_columns: HashSet<&str> = config.encrypted_columns.split(",").collect();
-        if !encrypted_columns.is_empty() {
-            // Set up per-column encryption.
-            for field in schema.fields().iter() {
-                if encrypted_columns.contains(field.name().as_str()) {
-                    // Here we re-use the same key for all encrypted columns,
-                    // but new keys could also be generated per column.
-                    builder = builder.with_column_key_and_metadata(
-                        field.name().as_str(),
-                        key.clone(),
-                        key_metadata.clone(),
-                    );
-                }
-            }
-        }
-
-        let encryption_properties = builder.build()?;
-
-        Ok(Some(encryption_properties))
+        Err(DataFusionError::NotImplemented(
+            "Comet does not support Parquet encryption yet."
+                .parse()
+                .unwrap(),
+        ))
     }
 
     /// Generate file decryption properties to use when reading a Parquet file.
@@ -249,18 +273,6 @@ impl EncryptionFactory for TestEncryptionFactory {
     }
 }
 
-/// Mock implementation of encrypting a key that simply base64 encodes the key.
-/// Note that this is not a secure way to store encryption keys,
-/// and for production use keys should be encrypted with a KMS.
-fn wrap_key(key: &[u8]) -> Vec<u8> {
-    println!("wrap_key");
-    io::stdout().flush().expect("Failed to flush stdout");
-    base64::prelude::BASE64_STANDARD
-        .encode(key)
-        .as_bytes()
-        .to_vec()
-}
-
 struct TestKeyRetriever {}
 
 impl KeyRetriever for TestKeyRetriever {
@@ -268,13 +280,11 @@ impl KeyRetriever for TestKeyRetriever {
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
         let key_metadata = std::str::from_utf8(key_metadata)?;
         println!("retrieve_key {:?}", key_metadata);
-        let map: HashMap<String, serde_json::Value> = serde_json::from_str(key_metadata).unwrap();
-        println!("map {:?}", map);
+        let key_material = KeyMaterial::parse(key_metadata)?;
+        println!("key_material {:?}", key_material);
         io::stdout().flush().expect("Failed to flush stdout");
-        let key = base64::prelude::BASE64_STANDARD
-            .decode(key_metadata)
-            .unwrap();
-        Ok(key)
+
+        Ok(vec![])
     }
 }
 
