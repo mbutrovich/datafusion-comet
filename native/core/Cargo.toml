@@ -73,6 +73,7 @@ aws-config = { workspace = true }
 aws-credential-types = { workspace = true }
 parking_lot = "0.12.3"
 datafusion-comet-objectstore-hdfs = { path = "../hdfs", optional = true, default-features = false, features = ["hdfs"] }
+base64 = "0.22.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = "0.18.0"

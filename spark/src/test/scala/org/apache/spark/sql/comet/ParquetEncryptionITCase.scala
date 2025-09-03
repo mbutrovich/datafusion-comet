@@ -19,21 +19,23 @@
 
 package org.apache.spark.sql.comet
 
-import org.apache.comet.CometConf.SCAN_NATIVE_DATAFUSION
-
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+
 import org.junit.runner.RunWith
 import org.scalactic.source.Position
 import org.scalatest.Tag
 import org.scalatestplus.junit.JUnitRunner
+
 import org.apache.spark.{DebugFilesystem, SparkConf}
 import org.apache.spark.sql.{CometTestBase, SQLContext}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SQLTestUtils
+
 import org.apache.comet.{CometConf, IntegrationTestSuite}
+import org.apache.comet.CometConf.SCAN_NATIVE_DATAFUSION
 
 /**
  * A integration test suite that tests parquet modular encryption usage.
