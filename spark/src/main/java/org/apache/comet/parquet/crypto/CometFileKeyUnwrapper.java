@@ -69,27 +69,50 @@ public class CometFileKeyUnwrapper {
         // Create the file path object
         System.out.println("Creating Hadoop Path object...");
         System.out.flush();
-        Path path = new Path(filePath);
-        System.out.println("Hadoop Path created successfully");
+
+        // Ensure we have an absolute path
+        String absoluteFilePath = filePath;
+        if (!filePath.startsWith("/")) {
+          // If path is not absolute, prepend "/"
+          absoluteFilePath = "/" + filePath;
+          System.out.println("Converted relative path to absolute: " + absoluteFilePath);
+          System.out.flush();
+        }
+
+        Path path = new Path(absoluteFilePath);
+        System.out.println("Hadoop Path created successfully: " + path.toString());
         System.out.flush();
 
         // Create the FileKeyUnwrapper with the proper configuration
-        // Note: FileKeyUnwrapper constructor is package-private, so we need to use reflection
-        // or find an alternative approach
+        // FileKeyUnwrapper constructor: FileKeyUnwrapper(Configuration hadoopConfiguration, Path
+        // filePath)
         System.out.println("Creating FileKeyUnwrapper via reflection...");
         System.out.flush();
 
+        // Debug: Print relevant configuration properties
+        System.out.println("Hadoop Configuration properties:");
+        System.out.println(
+            "  parquet.encryption.kms.client.class: "
+                + hadoopConf.get("parquet.encryption.kms.client.class"));
+        System.out.println(
+            "  parquet.encryption.kms.instance.id: "
+                + hadoopConf.get("parquet.encryption.kms.instance.id"));
+        System.out.println(
+            "  parquet.encryption.kms.instance.url: "
+                + hadoopConf.get("parquet.encryption.kms.instance.url"));
+        System.out.println(
+            "  parquet.encryption.key.list: " + hadoopConf.get("parquet.encryption.key.list"));
+        System.out.flush();
+
         // Try using reflection to access the package-private constructor
+        // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path filePath)
         java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
-            FileKeyUnwrapper.class.getDeclaredConstructor(
-                Configuration.class,
-                Path.class,
-                org.apache.parquet.crypto.keytools.FileKeyMaterialStore.class);
+            FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
         constructor.setAccessible(true);
 
         System.out.println("FileKeyUnwrapper constructor obtained, creating instance...");
         System.out.flush();
-        keyUnwrapper = constructor.newInstance(hadoopConf, path, null);
+        keyUnwrapper = constructor.newInstance(hadoopConf, path);
         System.out.println("FileKeyUnwrapper instance created successfully");
         System.out.flush();
 
@@ -172,9 +195,62 @@ public class CometFileKeyUnwrapper {
           org.apache.spark.sql.SparkSession.getActiveSession();
       if (sessionOption.isDefined()) {
         org.apache.spark.sql.SparkSession session = sessionOption.get();
-        return session.sparkContext().hadoopConfiguration();
+        Configuration hadoopConf = session.sparkContext().hadoopConfiguration();
+
+        // Transfer Spark SQL configuration properties to Hadoop configuration
+        // This is necessary because parquet encryption properties are set via Spark SQL conf
+        org.apache.spark.sql.internal.SQLConf sqlConf = session.sqlContext().conf();
+
+        System.out.println(
+            "Attempting to transfer Spark SQL properties to Hadoop configuration...");
+        System.out.flush();
+
+        // Copy parquet encryption related properties from Spark SQL conf to Hadoop conf
+        String[] encryptionProperties = {
+          "parquet.crypto.factory.class",
+          "parquet.encryption.kms.client.class",
+          "parquet.encryption.kms.instance.id",
+          "parquet.encryption.kms.instance.url",
+          "parquet.encryption.key.list",
+          "parquet.encryption.key.material.store.internally",
+          "parquet.encryption.column.keys",
+          "parquet.encryption.footer.key"
+        };
+
+        for (String property : encryptionProperties) {
+          try {
+            // Try to get the property from Spark SQL configuration
+            String value = sqlConf.getConfString(property, null);
+            if (value != null) {
+              hadoopConf.set(property, value);
+              System.out.println("Transferred property: " + property + " = " + value);
+              System.out.flush();
+            } else {
+              // Also try getting from the session's conf() method
+              try {
+                value = session.conf().get(property, null);
+                if (value != null) {
+                  hadoopConf.set(property, value);
+                  System.out.println(
+                      "Transferred property from session: " + property + " = " + value);
+                  System.out.flush();
+                }
+              } catch (Exception e) {
+                // Property might not exist in session conf either
+              }
+            }
+          } catch (Exception e) {
+            // Property might not exist, continue with next property
+            System.out.println("Could not transfer property " + property + ": " + e.getMessage());
+            System.out.flush();
+          }
+        }
+
+        return hadoopConf;
       }
     } catch (Exception e) {
+      System.out.println("Error getting configuration from SparkContext: " + e.getMessage());
+      System.out.flush();
       // Ignore and fall back
     }
 

@@ -93,6 +93,48 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
     }
   }
 
+  test("SPARK-37117: Can't read files in Parquet encryption external key material mode") {
+//    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_DATAFUSION)
+//    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_ICEBERG_COMPAT)
+
+    import testImplicits._
+
+    Seq("org.apache.parquet.crypto.keytools.PropertiesDrivenCryptoFactory").foreach {
+      factoryClass =>
+        withTempDir { dir =>
+          withSQLConf(
+            "parquet.crypto.factory.class" -> factoryClass,
+            "parquet.encryption.kms.client.class" ->
+              "org.apache.parquet.crypto.keytools.mocks.InMemoryKMS",
+            "parquet.encryption.key.material.store.internally" -> "false",
+            "parquet.encryption.key.list" ->
+              s"footerKey: ${footerKey}, key1: ${key1}, key2: ${key2}") {
+
+            val inputDF = spark
+              .range(0, 2000)
+              .map(i => (i, i.toString, i.toFloat))
+              .repartition(10)
+              .toDF("a", "b", "c")
+            val parquetDir = new File(dir, "parquet").getCanonicalPath
+            inputDF.write
+              .option("parquet.encryption.column.keys", "key1: a, b; key2: c")
+              .option("parquet.encryption.footer.key", "footerKey")
+              .parquet(parquetDir)
+
+            val parquetDF = spark.read.parquet(parquetDir)
+            assert(parquetDF.inputFiles.nonEmpty)
+            val readDataset = parquetDF.select("a", "b", "c")
+
+            if (CometConf.COMET_ENABLED.get(conf)) {
+              checkSparkAnswerAndOperator(readDataset)
+            } else {
+              checkAnswer(readDataset, inputDF)
+            }
+          }
+        }
+    }
+  }
+
   protected override def sparkConf: SparkConf = {
     val conf = new SparkConf()
     conf.set("spark.hadoop.fs.file.impl", classOf[DebugFilesystem].getName)
