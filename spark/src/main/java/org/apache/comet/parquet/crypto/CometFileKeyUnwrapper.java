@@ -19,6 +19,8 @@
 
 package org.apache.comet.parquet.crypto;
 
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.crypto.keytools.FileKeyUnwrapper;
@@ -30,6 +32,10 @@ import org.apache.spark.TaskContext;
  * a properly configured FileKeyUnwrapper.
  */
 public class CometFileKeyUnwrapper {
+
+  // Cache FileKeyUnwrapper instances by file path to reuse KMS configuration
+  private static final ConcurrentHashMap<String, FileKeyUnwrapper> UNWRAPPER_CACHE =
+      new ConcurrentHashMap<>();
 
   /**
    * Gets the decryption key for the given key metadata and file path. This method is called from
@@ -46,39 +52,55 @@ public class CometFileKeyUnwrapper {
     System.out.flush();
 
     try {
-      // Get the current Spark context's Hadoop configuration
-      System.out.println("Getting Hadoop configuration...");
-      System.out.flush();
-      Configuration hadoopConf = getCurrentHadoopConfiguration();
-      System.out.println("Hadoop configuration obtained successfully");
-      System.out.flush();
+      // Try to get cached FileKeyUnwrapper first
+      FileKeyUnwrapper keyUnwrapper = UNWRAPPER_CACHE.get(filePath);
 
-      // Create the file path object
-      System.out.println("Creating Hadoop Path object...");
-      System.out.flush();
-      Path path = new Path(filePath);
-      System.out.println("Hadoop Path created successfully");
-      System.out.flush();
+      if (keyUnwrapper == null) {
+        System.out.println("No cached FileKeyUnwrapper found for path, creating new instance...");
+        System.out.flush();
 
-      // Create the FileKeyUnwrapper with the proper configuration
-      // Note: FileKeyUnwrapper constructor is package-private, so we need to use reflection
-      // or find an alternative approach
-      System.out.println("Creating FileKeyUnwrapper via reflection...");
-      System.out.flush();
+        // Get the current Spark context's Hadoop configuration
+        System.out.println("Getting Hadoop configuration...");
+        System.out.flush();
+        Configuration hadoopConf = getCurrentHadoopConfiguration();
+        System.out.println("Hadoop configuration obtained successfully");
+        System.out.flush();
 
-      // Try using reflection to access the package-private constructor
-      java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
-          FileKeyUnwrapper.class.getDeclaredConstructor(
-              Configuration.class,
-              Path.class,
-              org.apache.parquet.crypto.keytools.FileKeyMaterialStore.class);
-      constructor.setAccessible(true);
+        // Create the file path object
+        System.out.println("Creating Hadoop Path object...");
+        System.out.flush();
+        Path path = new Path(filePath);
+        System.out.println("Hadoop Path created successfully");
+        System.out.flush();
 
-      System.out.println("FileKeyUnwrapper constructor obtained, creating instance...");
-      System.out.flush();
-      FileKeyUnwrapper keyUnwrapper = constructor.newInstance(hadoopConf, path, null);
-      System.out.println("FileKeyUnwrapper instance created successfully");
-      System.out.flush();
+        // Create the FileKeyUnwrapper with the proper configuration
+        // Note: FileKeyUnwrapper constructor is package-private, so we need to use reflection
+        // or find an alternative approach
+        System.out.println("Creating FileKeyUnwrapper via reflection...");
+        System.out.flush();
+
+        // Try using reflection to access the package-private constructor
+        java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
+            FileKeyUnwrapper.class.getDeclaredConstructor(
+                Configuration.class,
+                Path.class,
+                org.apache.parquet.crypto.keytools.FileKeyMaterialStore.class);
+        constructor.setAccessible(true);
+
+        System.out.println("FileKeyUnwrapper constructor obtained, creating instance...");
+        System.out.flush();
+        keyUnwrapper = constructor.newInstance(hadoopConf, path, null);
+        System.out.println("FileKeyUnwrapper instance created successfully");
+        System.out.flush();
+
+        // Cache the instance for future use
+        UNWRAPPER_CACHE.put(filePath, keyUnwrapper);
+        System.out.println("FileKeyUnwrapper cached for path: " + filePath);
+        System.out.flush();
+      } else {
+        System.out.println("Using cached FileKeyUnwrapper for path: " + filePath);
+        System.out.flush();
+      }
 
       // Call the getKey method to decrypt the key
       System.out.println("Calling FileKeyUnwrapper.getKey...");
@@ -100,6 +122,23 @@ public class CometFileKeyUnwrapper {
       System.err.flush();
       throw new RuntimeException("Failed to decrypt key: " + e.getMessage(), e);
     }
+  }
+
+  /**
+   * Clears the FileKeyUnwrapper cache. This can be called when files are no longer needed to free
+   * up memory.
+   */
+  public static void clearCache() {
+    UNWRAPPER_CACHE.clear();
+    System.out.println("FileKeyUnwrapper cache cleared");
+    System.out.flush();
+  }
+
+  /** Removes a specific file path from the cache. */
+  public static void removeCachedUnwrapper(String filePath) {
+    UNWRAPPER_CACHE.remove(filePath);
+    System.out.println("Removed cached FileKeyUnwrapper for path: " + filePath);
+    System.out.flush();
   }
 
   /**
