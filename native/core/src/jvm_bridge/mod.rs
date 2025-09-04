@@ -174,11 +174,14 @@ pub use comet_exec::*;
 mod batch_iterator;
 mod comet_metric_node;
 mod comet_task_memory_manager;
+mod file_key_unwrapper;
 
 use crate::{errors::CometError, JAVA_VM};
 use batch_iterator::CometBatchIterator;
+use file_key_unwrapper::FileKeyUnwrapper;
 pub use comet_metric_node::*;
 pub use comet_task_memory_manager::*;
+use std::io::Write;
 
 /// The JVM classes that are used in the JNI calls.
 #[allow(dead_code)] // we need to keep references to Java items to prevent GC
@@ -207,6 +210,8 @@ pub struct JVMClasses<'a> {
     /// The CometTaskMemoryManager used for interacting with JVM side to
     /// acquire & release native memory.
     pub comet_task_memory_manager: CometTaskMemoryManager<'a>,
+    /// The FileKeyUnwrapper used for unwrapping encryption keys.
+    pub file_key_unwrapper: FileKeyUnwrapper<'a>,
 }
 
 unsafe impl Send for JVMClasses<'_> {}
@@ -258,6 +263,22 @@ impl JVMClasses<'_> {
                 comet_exec: CometExec::new(env).unwrap(),
                 comet_batch_iterator: CometBatchIterator::new(env).unwrap(),
                 comet_task_memory_manager: CometTaskMemoryManager::new(env).unwrap(),
+                file_key_unwrapper: {
+                    println!("JVMClasses::init - initializing FileKeyUnwrapper...");
+                    std::io::stdout().flush().expect("Failed to flush stdout");
+                    match FileKeyUnwrapper::new(env) {
+                        Ok(wrapper) => {
+                            println!("JVMClasses::init - FileKeyUnwrapper initialized successfully");
+                            std::io::stdout().flush().expect("Failed to flush stdout");
+                            wrapper
+                        },
+                        Err(e) => {
+                            println!("JVMClasses::init - FileKeyUnwrapper initialization failed: {}", e);
+                            std::io::stdout().flush().expect("Failed to flush stdout");
+                            panic!("Failed to initialize FileKeyUnwrapper: {}", e);
+                        }
+                    }
+                },
             }
         });
     }
