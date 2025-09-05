@@ -24,7 +24,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.crypto.keytools.FileKeyUnwrapper;
-import org.apache.spark.TaskContext;
 
 /**
  * Helper class to access FileKeyUnwrapper from native code via JNI. This class handles the
@@ -62,7 +61,7 @@ public class CometFileKeyUnwrapper {
         // Get the current Spark context's Hadoop configuration
         System.out.println("Getting Hadoop configuration...");
         System.out.flush();
-        Configuration hadoopConf = getCurrentHadoopConfiguration();
+        Configuration hadoopConf = new Configuration();
         System.out.println("Hadoop configuration obtained successfully");
         System.out.flush();
 
@@ -145,117 +144,5 @@ public class CometFileKeyUnwrapper {
       System.err.flush();
       throw new RuntimeException("Failed to decrypt key: " + e.getMessage(), e);
     }
-  }
-
-  /**
-   * Clears the FileKeyUnwrapper cache. This can be called when files are no longer needed to free
-   * up memory.
-   */
-  public static void clearCache() {
-    UNWRAPPER_CACHE.clear();
-    System.out.println("FileKeyUnwrapper cache cleared");
-    System.out.flush();
-  }
-
-  /** Removes a specific file path from the cache. */
-  public static void removeCachedUnwrapper(String filePath) {
-    UNWRAPPER_CACHE.remove(filePath);
-    System.out.println("Removed cached FileKeyUnwrapper for path: " + filePath);
-    System.out.flush();
-  }
-
-  /**
-   * Gets the current Hadoop Configuration from the Spark context. This configuration should contain
-   * all the necessary settings for encryption/decryption including KMS configurations.
-   */
-  private static Configuration getCurrentHadoopConfiguration() {
-    // Try to get from current task context first
-    TaskContext taskContext = TaskContext.get();
-    if (taskContext != null) {
-      // TaskContext doesn't have direct access to SparkContext
-      // We need to access it through the partition/stage info
-      try {
-        // Access SparkContext through reflection or other means
-        // For now, let's use a simpler approach
-        return getConfigurationFromActiveSparkContext();
-      } catch (Exception e) {
-        // Fall back to default
-      }
-    }
-
-    // Try to get active SparkContext
-    return getConfigurationFromActiveSparkContext();
-  }
-
-  /** Helper method to get Configuration from active SparkContext */
-  private static Configuration getConfigurationFromActiveSparkContext() {
-    try {
-      // Try to get the current SparkContext through SparkSession
-      scala.Option<org.apache.spark.sql.SparkSession> sessionOption =
-          org.apache.spark.sql.SparkSession.getActiveSession();
-      if (sessionOption.isDefined()) {
-        org.apache.spark.sql.SparkSession session = sessionOption.get();
-        Configuration hadoopConf = session.sparkContext().hadoopConfiguration();
-
-        // Transfer Spark SQL configuration properties to Hadoop configuration
-        // This is necessary because parquet encryption properties are set via Spark SQL conf
-        org.apache.spark.sql.internal.SQLConf sqlConf = session.sqlContext().conf();
-
-        System.out.println(
-            "Attempting to transfer Spark SQL properties to Hadoop configuration...");
-        System.out.flush();
-
-        // Copy parquet encryption related properties from Spark SQL conf to Hadoop conf
-        String[] encryptionProperties = {
-          "parquet.crypto.factory.class",
-          "parquet.encryption.kms.client.class",
-          "parquet.encryption.kms.instance.id",
-          "parquet.encryption.kms.instance.url",
-          "parquet.encryption.key.list",
-          "parquet.encryption.key.material.store.internally",
-          "parquet.encryption.column.keys",
-          "parquet.encryption.footer.key"
-        };
-
-        for (String property : encryptionProperties) {
-          try {
-            // Try to get the property from Spark SQL configuration
-            String value = sqlConf.getConfString(property, null);
-            if (value != null) {
-              hadoopConf.set(property, value);
-              System.out.println("Transferred property: " + property + " = " + value);
-              System.out.flush();
-            } else {
-              // Also try getting from the session's conf() method
-              try {
-                value = session.conf().get(property, null);
-                if (value != null) {
-                  hadoopConf.set(property, value);
-                  System.out.println(
-                      "Transferred property from session: " + property + " = " + value);
-                  System.out.flush();
-                }
-              } catch (Exception e) {
-                // Property might not exist in session conf either
-              }
-            }
-          } catch (Exception e) {
-            // Property might not exist, continue with next property
-            System.out.println("Could not transfer property " + property + ": " + e.getMessage());
-            System.out.flush();
-          }
-        }
-
-        return hadoopConf;
-      }
-    } catch (Exception e) {
-      System.out.println("Error getting configuration from SparkContext: " + e.getMessage());
-      System.out.flush();
-      // Ignore and fall back
-    }
-
-    // Last resort: return a new Configuration (may not have all settings)
-    // This is not ideal but prevents the code from failing
-    return new Configuration();
   }
 }
