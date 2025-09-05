@@ -42,8 +42,6 @@ use parquet::encryption::encrypt::FileEncryptionProperties;
 use parquet::errors::ParquetError;
 use serde_json;
 use std::collections::HashMap;
-use std::io;
-use std::io::Write;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -299,8 +297,6 @@ impl EncryptionFactory for TestEncryptionFactory {
         _options: &EncryptionFactoryOptions,
         file_path: &Path,
     ) -> Result<Option<FileDecryptionProperties>, DataFusionError> {
-        println!("get_file_decryption_properties");
-        io::stdout().flush().expect("Failed to flush stdout");
         let decryption_properties =
             FileDecryptionProperties::with_key_retriever(Arc::new(TestKeyRetriever {
                 file_path: file_path.to_string(),
@@ -317,7 +313,6 @@ struct TestKeyRetriever {
 impl KeyRetriever for TestKeyRetriever {
     /// Get a data encryption key using the metadata stored in the Parquet file.
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
-
         // Get JNI environment
         let mut env = JVMClasses::get_env().unwrap();
 
@@ -344,23 +339,6 @@ impl KeyRetriever for TestKeyRetriever {
             )
         };
 
-        // Check for Java exceptions before processing the result
-        // if let Some(exception) = crate::jvm_bridge::check_exception(&mut env).map_err(|e| {
-        //     println!("Failed to check for JNI exceptions: {}", e);
-        //     io::stdout().flush().expect("Failed to flush stdout");
-        //     ParquetError::General(format!("Failed to check for JNI exceptions: {}", e))
-        // })? {
-        //     println!(
-        //         "Java exception occurred during CometFileKeyUnwrapper.getKey call: {}",
-        //         exception
-        //     );
-        //     io::stdout().flush().expect("Failed to flush stdout");
-        //     return Err(ParquetError::General(format!(
-        //         "Java exception in CometFileKeyUnwrapper.getKey: {}",
-        //         exception
-        //     )));
-        // }
-
         let result = result.unwrap();
 
         // Extract the byte array from the result
@@ -378,8 +356,6 @@ fn get_options(
     session_timezone: &str,
     case_sensitive: bool,
 ) -> (TableParquetOptions, SparkParquetOptions) {
-    println!("get_options");
-    io::stdout().flush().expect("Failed to flush stdout");
     let mut table_parquet_options = TableParquetOptions::new();
     table_parquet_options.global.pushdown_filters = true;
     table_parquet_options.global.reorder_filters = true;

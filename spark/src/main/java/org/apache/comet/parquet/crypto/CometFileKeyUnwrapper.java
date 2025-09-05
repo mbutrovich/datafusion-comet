@@ -61,51 +61,26 @@ public class CometFileKeyUnwrapper {
    * @throws Exception if key unwrapping fails
    */
   public static byte[] getKey(byte[] keyMetadata, String filePath) throws Exception {
-    System.out.println("CometFileKeyUnwrapper.getKey called with filePath: " + filePath);
-    System.out.println("CometFileKeyUnwrapper.getKey keyMetadata length: " + keyMetadata.length);
-    System.out.flush();
+
+    // Ensure we have an absolute path
+    String absoluteFilePath = filePath;
+    if (!filePath.startsWith("/")) {
+      // If path is not absolute, prepend "/"
+      absoluteFilePath = "/" + filePath;
+    }
 
     try {
       // Try to get cached FileKeyUnwrapper first
-      FileKeyUnwrapper keyUnwrapper = UNWRAPPER_CACHE.get(filePath);
+      FileKeyUnwrapper keyUnwrapper = UNWRAPPER_CACHE.get(absoluteFilePath);
 
       if (keyUnwrapper == null) {
-        System.out.println("No cached FileKeyUnwrapper found for path, creating new instance...");
-        System.out.flush();
-
-        // Ensure we have an absolute path
-        String absoluteFilePath = filePath;
-        if (!filePath.startsWith("/")) {
-          // If path is not absolute, prepend "/"
-          absoluteFilePath = "/" + filePath;
-          System.out.println("Converted relative path to absolute: " + absoluteFilePath);
-          System.out.flush();
-        }
-
-        Path path = new Path(absoluteFilePath);
-        System.out.println("Hadoop Path created successfully: " + path.toString());
-        System.out.flush();
 
         // Get the Hadoop configuration for this file path, or create a default one
         Configuration hadoopConf = HADOOP_CONF_CACHE.get(absoluteFilePath);
-        if (hadoopConf != null) {
-          System.out.println("Using stored hadoopConf for path: " + absoluteFilePath);
-        } else {
+        if (hadoopConf == null) {
           throw new RuntimeException(
               "Failed to retrieve stored hadoopConf for path: " + absoluteFilePath);
         }
-        System.out.println("Hadoop configuration obtained successfully");
-        System.out.flush();
-
-        // Create the file path object
-        System.out.println("Creating Hadoop Path object...");
-        System.out.flush();
-
-        // Create the FileKeyUnwrapper with the proper configuration
-        // FileKeyUnwrapper constructor: FileKeyUnwrapper(Configuration hadoopConfiguration, Path
-        // filePath)
-        System.out.println("Creating FileKeyUnwrapper via reflection...");
-        System.out.flush();
 
         // Try using reflection to access the package-private constructor
         // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path filePath)
@@ -113,31 +88,15 @@ public class CometFileKeyUnwrapper {
             FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
         constructor.setAccessible(true);
 
-        System.out.println("FileKeyUnwrapper constructor obtained, creating instance...");
-        System.out.flush();
+        Path path = new Path(absoluteFilePath);
         keyUnwrapper = constructor.newInstance(hadoopConf, path);
-        System.out.println("FileKeyUnwrapper instance created successfully");
-        System.out.flush();
 
         // Cache the instance for future use
-        UNWRAPPER_CACHE.put(filePath, keyUnwrapper);
-        System.out.println("FileKeyUnwrapper cached for path: " + filePath);
-        System.out.flush();
-      } else {
-        System.out.println("Using cached FileKeyUnwrapper for path: " + filePath);
-        System.out.flush();
+        UNWRAPPER_CACHE.put(absoluteFilePath, keyUnwrapper);
       }
 
       // Call the getKey method to decrypt the key
-      System.out.println("Calling FileKeyUnwrapper.getKey...");
-      System.out.flush();
-      byte[] result = keyUnwrapper.getKey(keyMetadata);
-      System.out.println(
-          "FileKeyUnwrapper.getKey completed successfully, result length: "
-              + (result != null ? result.length : "null"));
-      System.out.flush();
-
-      return result;
+      return keyUnwrapper.getKey(keyMetadata);
     } catch (Exception e) {
       System.err.println(
           "Exception in CometFileKeyUnwrapper.getKey: "
