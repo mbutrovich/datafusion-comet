@@ -35,7 +35,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SQLTestUtils
 
 import org.apache.comet.{CometConf, IntegrationTestSuite}
-import org.apache.comet.CometConf.SCAN_NATIVE_DATAFUSION
+import org.apache.comet.CometConf.{SCAN_NATIVE_DATAFUSION, SCAN_NATIVE_ICEBERG_COMPAT}
 
 /**
  * A integration test suite that tests parquet modular encryption usage.
@@ -153,7 +153,7 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
           CometConf.COMET_ENABLED.key -> "true",
           CometConf.COMET_EXEC_ENABLED.key -> "true",
           SQLConf.ANSI_ENABLED.key -> "false",
-          CometConf.COMET_NATIVE_SCAN_IMPL.key -> SCAN_NATIVE_DATAFUSION) {
+          CometConf.COMET_NATIVE_SCAN_IMPL.key -> SCAN_NATIVE_ICEBERG_COMPAT) {
           testFun
         }
       }

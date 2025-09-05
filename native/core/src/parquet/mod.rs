@@ -53,7 +53,7 @@ use crate::execution::planner::PhysicalPlanner;
 use crate::execution::serde;
 use crate::execution::utils::SparkArrowConvert;
 use crate::parquet::data_type::AsBytes;
-use crate::parquet::parquet_exec::init_datasource_exec;
+use crate::parquet::parquet_exec::{init_datasource_exec, TestEncryptionFactory, ENCRYPTION_FACTORY_ID};
 use crate::parquet::parquet_support::prepare_object_store_with_configs;
 use arrow::array::{Array, RecordBatch};
 use arrow::buffer::{Buffer, MutableBuffer};
@@ -69,6 +69,7 @@ use jni::sys::{jstring, JNI_FALSE};
 use object_store::path::Path;
 use read::ColumnReader;
 use util::jni::{convert_column_descriptor, convert_encoding, deserialize_schema};
+use crate::jvm_bridge::JVMClasses;
 
 /// Parquet read context maintained across multiple JNI calls.
 struct Context {
@@ -714,6 +715,7 @@ pub unsafe extern "system" fn Java_org_apache_comet_parquet_Native_initRecordBat
     object_store_options: jobject,
 ) -> jlong {
     try_unwrap_or_throw(&e, |mut env| unsafe {
+        JVMClasses::init(&mut env);
         let session_config = SessionConfig::new().with_batch_size(batch_size as usize);
         let planner =
             PhysicalPlanner::new(Arc::new(SessionContext::new_with_config(session_config)), 0);
@@ -765,6 +767,11 @@ pub unsafe extern "system" fn Java_org_apache_comet_parquet_Native_initRecordBat
             .get_string(&JString::from_raw(session_timezone))
             .unwrap()
             .into();
+
+        let encryption_factory = TestEncryptionFactory::default();
+        session_ctx
+            .runtime_env()
+            .register_parquet_encryption_factory(ENCRYPTION_FACTORY_ID, Arc::new(encryption_factory));
 
         let scan = init_datasource_exec(
             required_schema,
