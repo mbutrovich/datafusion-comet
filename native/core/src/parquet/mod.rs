@@ -52,8 +52,11 @@ use crate::execution::operators::ExecutionError;
 use crate::execution::planner::PhysicalPlanner;
 use crate::execution::serde;
 use crate::execution::utils::SparkArrowConvert;
+use crate::jvm_bridge::JVMClasses;
 use crate::parquet::data_type::AsBytes;
-use crate::parquet::parquet_exec::{init_datasource_exec, TestEncryptionFactory, ENCRYPTION_FACTORY_ID};
+use crate::parquet::parquet_exec::{
+    init_datasource_exec, TestEncryptionFactory, ENCRYPTION_FACTORY_ID,
+};
 use crate::parquet::parquet_support::prepare_object_store_with_configs;
 use arrow::array::{Array, RecordBatch};
 use arrow::buffer::{Buffer, MutableBuffer};
@@ -69,7 +72,6 @@ use jni::sys::{jstring, JNI_FALSE};
 use object_store::path::Path;
 use read::ColumnReader;
 use util::jni::{convert_column_descriptor, convert_encoding, deserialize_schema};
-use crate::jvm_bridge::JVMClasses;
 
 /// Parquet read context maintained across multiple JNI calls.
 struct Context {
@@ -771,7 +773,10 @@ pub unsafe extern "system" fn Java_org_apache_comet_parquet_Native_initRecordBat
         let encryption_factory = TestEncryptionFactory::default();
         session_ctx
             .runtime_env()
-            .register_parquet_encryption_factory(ENCRYPTION_FACTORY_ID, Arc::new(encryption_factory));
+            .register_parquet_encryption_factory(
+                ENCRYPTION_FACTORY_ID,
+                Arc::new(encryption_factory),
+            );
 
         let scan = init_datasource_exec(
             required_schema,
