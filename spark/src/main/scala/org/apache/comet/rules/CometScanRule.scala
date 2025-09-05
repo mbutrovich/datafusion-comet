@@ -45,12 +45,14 @@ import org.apache.comet.CometSparkSessionExtensions.{isCometLoaded, isCometScanE
 import org.apache.comet.DataTypeSupport.isComplexType
 import org.apache.comet.objectstore.NativeConfig
 import org.apache.comet.parquet.{CometParquetScan, Native, SupportsComet}
+import org.apache.comet.parquet.crypto.CometFileKeyUnwrapper
 import org.apache.comet.shims.CometTypeShim
 
 /**
  * Spark physical optimizer rule for replacing Spark scans with Comet scans.
  */
 case class CometScanRule(session: SparkSession) extends Rule[SparkPlan] with CometTypeShim {
+
   import CometScanRule._
 
   private lazy val showTransformations = CometConf.COMET_EXPLAIN_TRANSFORMATIONS.get()
@@ -138,9 +140,9 @@ case class CometScanRule(session: SparkSession) extends Rule[SparkPlan] with Com
           return withInfos(scanExec, fallbackReasons.toSet)
         }
 
-//        val encryptionEnabled: Boolean =
-//          conf.getConfString("parquet.crypto.factory.class", "").nonEmpty &&
-//            conf.getConfString("parquet.encryption.kms.client.class", "").nonEmpty
+        val encryptionEnabled: Boolean =
+          conf.getConfString("parquet.crypto.factory.class", "").nonEmpty &&
+            conf.getConfString("parquet.encryption.kms.client.class", "").nonEmpty
 
         var scanImpl = COMET_NATIVE_SCAN_IMPL.get()
 
@@ -205,6 +207,18 @@ case class CometScanRule(session: SparkSession) extends Rule[SparkPlan] with Com
 //            "Full native scan disabled because encryption is not supported"
 //          return withInfos(scanExec, fallbackReasons.toSet)
 //        }
+
+        assert(
+          scanExec.inputRDD.sparkContext.hadoopConfiguration == scanExec.relation.sparkSession.sparkContext.hadoopConfiguration)
+
+        if (encryptionEnabled) {
+          scanExec.relation.inputFiles.foreach((filePath: String) => {
+            val absolutePath = new URI(filePath).getPath;
+            CometFileKeyUnwrapper.storeHadoopConf(
+              absolutePath,
+              scanExec.relation.sparkSession.sparkContext.hadoopConfiguration)
+          })
+        }
 
         val typeChecker = CometScanTypeChecker(scanImpl)
         val schemaSupported =

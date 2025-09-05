@@ -36,6 +36,21 @@ public class CometFileKeyUnwrapper {
   private static final ConcurrentHashMap<String, FileKeyUnwrapper> UNWRAPPER_CACHE =
       new ConcurrentHashMap<>();
 
+  // Cache mapping from file path to its corresponding Hadoop Configuration
+  private static final ConcurrentHashMap<String, Configuration> HADOOP_CONF_CACHE =
+      new ConcurrentHashMap<>();
+
+  /**
+   * Preemptively stores the Hadoop Configuration for a given file path. This method should be
+   * called during plan creation when the correct hadoopConf is available.
+   *
+   * @param filePath The path to the Parquet file
+   * @param hadoopConf The Hadoop Configuration to use for this file path
+   */
+  public static void storeHadoopConf(String filePath, Configuration hadoopConf) {
+    HADOOP_CONF_CACHE.put(filePath, hadoopConf);
+  }
+
   /**
    * Gets the decryption key for the given key metadata and file path. This method is called from
    * native Rust code via JNI.
@@ -58,17 +73,6 @@ public class CometFileKeyUnwrapper {
         System.out.println("No cached FileKeyUnwrapper found for path, creating new instance...");
         System.out.flush();
 
-        // Get the current Spark context's Hadoop configuration
-        System.out.println("Getting Hadoop configuration...");
-        System.out.flush();
-        Configuration hadoopConf = new Configuration();
-        System.out.println("Hadoop configuration obtained successfully");
-        System.out.flush();
-
-        // Create the file path object
-        System.out.println("Creating Hadoop Path object...");
-        System.out.flush();
-
         // Ensure we have an absolute path
         String absoluteFilePath = filePath;
         if (!filePath.startsWith("/")) {
@@ -82,25 +86,25 @@ public class CometFileKeyUnwrapper {
         System.out.println("Hadoop Path created successfully: " + path.toString());
         System.out.flush();
 
+        // Get the Hadoop configuration for this file path, or create a default one
+        Configuration hadoopConf = HADOOP_CONF_CACHE.get(absoluteFilePath);
+        if (hadoopConf != null) {
+          System.out.println("Using stored hadoopConf for path: " + absoluteFilePath);
+        } else {
+          throw new RuntimeException(
+              "Failed to retrieve stored hadoopConf for path: " + absoluteFilePath);
+        }
+        System.out.println("Hadoop configuration obtained successfully");
+        System.out.flush();
+
+        // Create the file path object
+        System.out.println("Creating Hadoop Path object...");
+        System.out.flush();
+
         // Create the FileKeyUnwrapper with the proper configuration
         // FileKeyUnwrapper constructor: FileKeyUnwrapper(Configuration hadoopConfiguration, Path
         // filePath)
         System.out.println("Creating FileKeyUnwrapper via reflection...");
-        System.out.flush();
-
-        // Debug: Print relevant configuration properties
-        System.out.println("Hadoop Configuration properties:");
-        System.out.println(
-            "  parquet.encryption.kms.client.class: "
-                + hadoopConf.get("parquet.encryption.kms.client.class"));
-        System.out.println(
-            "  parquet.encryption.kms.instance.id: "
-                + hadoopConf.get("parquet.encryption.kms.instance.id"));
-        System.out.println(
-            "  parquet.encryption.kms.instance.url: "
-                + hadoopConf.get("parquet.encryption.kms.instance.url"));
-        System.out.println(
-            "  parquet.encryption.key.list: " + hadoopConf.get("parquet.encryption.key.list"));
         System.out.flush();
 
         // Try using reflection to access the package-private constructor
