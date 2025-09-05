@@ -16,7 +16,7 @@
 // under the License.
 
 use crate::execution::operators::ExecutionError;
-use crate::jvm_bridge::{JVMClasses};
+use crate::jvm_bridge::JVMClasses;
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkSchemaAdapterFactory;
 use arrow::datatypes::{Field, SchemaRef};
@@ -265,35 +265,11 @@ pub(crate) fn init_datasource_exec(
     Ok(Arc::new(DataSourceExec::new(Arc::new(file_scan_config))))
 }
 
-// struct CustomKeyRetriever {
-//     keys: Mutex<HashMap<String, Vec<u8>>>,
-// }
-//
-// impl KeyRetriever for CustomKeyRetriever {
-//     fn retrieve_key(&self, key_metadata: &[u8]) -> parquet::errors::Result<Vec<u8>> {
-//         // Metadata is bytes, so convert it to a string identifier
-//         let key_metadata = std::str::from_utf8(key_metadata).map_err(|e| {
-//             ParquetError::General(format!("Could not convert key metadata to string: {e}"))
-//         })?;
-//         println!("retrieve_key: {:?}", key_metadata);
-//         // Lookup the key
-//         let keys = self.keys.lock().unwrap();
-//         match keys.get(key_metadata) {
-//             Some(key) => Ok(key.clone()),
-//             None => Err(ParquetError::General(format!(
-//                 "Could not retrieve key for metadata {key_metadata:?}"
-//             ))),
-//         }
-//     }
-// }
-
-pub const ENCRYPTION_FACTORY_ID: &str = "example.mock_kms_encryption";
+pub const ENCRYPTION_FACTORY_ID: &str = "comet.jni_kms_encryption";
 
 // Options used to configure our example encryption factory
 extensions_options! {
-    struct EncryptionConfig {
-        /// Comma-separated list of columns to encrypt
-        pub encrypted_columns: String, default = "".to_owned()
+    struct CometParquetEncryptionConfig {
     }
 }
 #[derive(Default, Debug)]
@@ -328,7 +304,8 @@ impl EncryptionFactory for TestEncryptionFactory {
         let decryption_properties =
             FileDecryptionProperties::with_key_retriever(Arc::new(TestKeyRetriever {
                 file_path: file_path.to_string(),
-            })).build()?;
+            }))
+            .build()?;
         Ok(Some(decryption_properties))
     }
 }
@@ -340,7 +317,10 @@ struct TestKeyRetriever {
 impl KeyRetriever for TestKeyRetriever {
     /// Get a data encryption key using the metadata stored in the Parquet file.
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
-        println!("TestKeyRetriever::retrieve_key called with metadata length: {}", key_metadata.len());
+        println!(
+            "TestKeyRetriever::retrieve_key called with metadata length: {}",
+            key_metadata.len()
+        );
         let key_metadata_string = std::str::from_utf8(key_metadata)?;
         println!("key_metadata_string {:?}", key_metadata_string);
         println!("File path: {}", self.file_path);
@@ -386,7 +366,7 @@ impl KeyRetriever for TestKeyRetriever {
         let file_key_unwrapper = &jvm_classes.file_key_unwrapper;
         println!("CometFileKeyUnwrapper class obtained successfully");
         io::stdout().flush().expect("Failed to flush stdout");
-        
+
         // Call static method CometFileKeyUnwrapper.getKey(byte[], String) -> byte[]
         println!("Calling CometFileKeyUnwrapper.getKey via JNI...");
         io::stdout().flush().expect("Failed to flush stdout");
@@ -408,15 +388,24 @@ impl KeyRetriever for TestKeyRetriever {
             io::stdout().flush().expect("Failed to flush stdout");
             ParquetError::General(format!("Failed to check for JNI exceptions: {}", e))
         })? {
-            println!("Java exception occurred during CometFileKeyUnwrapper.getKey call: {}", exception);
+            println!(
+                "Java exception occurred during CometFileKeyUnwrapper.getKey call: {}",
+                exception
+            );
             io::stdout().flush().expect("Failed to flush stdout");
-            return Err(ParquetError::General(format!("Java exception in CometFileKeyUnwrapper.getKey: {}", exception)));
+            return Err(ParquetError::General(format!(
+                "Java exception in CometFileKeyUnwrapper.getKey: {}",
+                exception
+            )));
         }
 
         let result = result.map_err(|e| {
             println!("Failed to call CometFileKeyUnwrapper.getKey: {}", e);
             io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to call CometFileKeyUnwrapper.getKey: {}", e))
+            ParquetError::General(format!(
+                "Failed to call CometFileKeyUnwrapper.getKey: {}",
+                e
+            ))
         })?;
         println!("JNI call completed successfully");
         io::stdout().flush().expect("Failed to flush stdout");
@@ -427,7 +416,7 @@ impl KeyRetriever for TestKeyRetriever {
         let result_array = result.l().map_err(|e| {
             println!("Failed to get object from result: {}", e);
             io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to get object from result: {}", e))  
+            ParquetError::General(format!("Failed to get object from result: {}", e))
         })?;
         println!("Object extracted from result successfully");
         io::stdout().flush().expect("Failed to flush stdout");
@@ -448,7 +437,7 @@ impl KeyRetriever for TestKeyRetriever {
         })?;
         println!("Vec<u8> conversion successful");
         io::stdout().flush().expect("Failed to flush stdout");
-        
+
         println!("result byte array: {:?}", result_vec);
         io::stdout().flush().expect("Failed to flush stdout");
         println!("TestKeyRetriever::retrieve_key completed successfully");
@@ -489,9 +478,10 @@ fn get_options(
     // table_parquet_options.crypto.file_decryption =
     //     Some(ConfigFileDecryptionProperties::from(&decryption_properties));
 
-    table_parquet_options
-        .crypto
-        .configure_factory(ENCRYPTION_FACTORY_ID, &EncryptionConfig::default());
+    table_parquet_options.crypto.configure_factory(
+        ENCRYPTION_FACTORY_ID,
+        &CometParquetEncryptionConfig::default(),
+    );
 
     (table_parquet_options, spark_parquet_options)
 }

@@ -34,15 +34,18 @@ impl<'a> FileKeyUnwrapper<'a> {
     pub const JVM_CLASS: &'static str = "org/apache/comet/parquet/crypto/CometFileKeyUnwrapper";
 
     pub fn new(env: &mut JNIEnv<'a>) -> JniResult<FileKeyUnwrapper<'a>> {
-        println!("FileKeyUnwrapper::new - attempting to find class: {}", Self::JVM_CLASS);
+        println!(
+            "FileKeyUnwrapper::new - attempting to find class: {}",
+            Self::JVM_CLASS
+        );
         io::stdout().flush().expect("Failed to flush stdout");
-        
+
         let class = match env.find_class(Self::JVM_CLASS) {
             Ok(cls) => {
                 println!("FileKeyUnwrapper::new - class found successfully");
                 io::stdout().flush().expect("Failed to flush stdout");
                 cls
-            },
+            }
             Err(e) => {
                 println!("FileKeyUnwrapper::new - failed to find class: {}", e);
                 io::stdout().flush().expect("Failed to flush stdout");
@@ -53,23 +56,23 @@ impl<'a> FileKeyUnwrapper<'a> {
         // getKey is a static method with signature: public static byte[] getKey(byte[] keyMetadata, String filePath)
         println!("FileKeyUnwrapper::new - attempting to get static method ID for getKey([BLjava/lang/String;)[B");
         io::stdout().flush().expect("Failed to flush stdout");
-        
-        let method_get_key = match env.get_static_method_id(
-            Self::JVM_CLASS,
-            "getKey",
-            "([BLjava/lang/String;)[B",
-        ) {
-            Ok(method) => {
-                println!("FileKeyUnwrapper::new - static method ID obtained successfully");
-                io::stdout().flush().expect("Failed to flush stdout");
-                method
-            },
-            Err(e) => {
-                println!("FileKeyUnwrapper::new - failed to get static method ID: {}", e);
-                io::stdout().flush().expect("Failed to flush stdout");
-                return Err(e);
-            }
-        };
+
+        let method_get_key =
+            match env.get_static_method_id(Self::JVM_CLASS, "getKey", "([BLjava/lang/String;)[B") {
+                Ok(method) => {
+                    println!("FileKeyUnwrapper::new - static method ID obtained successfully");
+                    io::stdout().flush().expect("Failed to flush stdout");
+                    method
+                }
+                Err(e) => {
+                    println!(
+                        "FileKeyUnwrapper::new - failed to get static method ID: {}",
+                        e
+                    );
+                    io::stdout().flush().expect("Failed to flush stdout");
+                    return Err(e);
+                }
+            };
 
         println!("FileKeyUnwrapper::new - initialization complete");
         io::stdout().flush().expect("Failed to flush stdout");

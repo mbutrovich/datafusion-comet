@@ -178,9 +178,9 @@ mod file_key_unwrapper;
 
 use crate::{errors::CometError, JAVA_VM};
 use batch_iterator::CometBatchIterator;
-use file_key_unwrapper::FileKeyUnwrapper;
 pub use comet_metric_node::*;
 pub use comet_task_memory_manager::*;
+use file_key_unwrapper::FileKeyUnwrapper;
 use std::io::Write;
 
 /// The JVM classes that are used in the JNI calls.
@@ -268,12 +268,17 @@ impl JVMClasses<'_> {
                     std::io::stdout().flush().expect("Failed to flush stdout");
                     match FileKeyUnwrapper::new(env) {
                         Ok(wrapper) => {
-                            println!("JVMClasses::init - FileKeyUnwrapper initialized successfully");
+                            println!(
+                                "JVMClasses::init - FileKeyUnwrapper initialized successfully"
+                            );
                             std::io::stdout().flush().expect("Failed to flush stdout");
                             wrapper
-                        },
+                        }
                         Err(e) => {
-                            println!("JVMClasses::init - FileKeyUnwrapper initialization failed: {}", e);
+                            println!(
+                                "JVMClasses::init - FileKeyUnwrapper initialization failed: {}",
+                                e
+                            );
                             std::io::stdout().flush().expect("Failed to flush stdout");
                             panic!("Failed to initialize FileKeyUnwrapper: {}", e);
                         }
