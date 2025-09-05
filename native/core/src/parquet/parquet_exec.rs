@@ -365,23 +365,6 @@ fn get_options(
     spark_parquet_options.allow_cast_unsigned_ints = true;
     spark_parquet_options.case_sensitive = case_sensitive;
 
-    // let mut keys = HashMap::new();
-    // keys.insert("kf".to_owned(), b"0123456789012345".to_vec());
-    // keys.insert("kc1".to_owned(), b"1234567890123450".to_vec());
-    // keys.insert("kc2".to_owned(), b"1234567890123451".to_vec());
-    //
-    // let key_retriever = Arc::new(CustomKeyRetriever {
-    //     keys: Mutex::new(keys),
-    // });
-
-    // let decryption_properties =
-    //     FileDecryptionProperties::with_key_retriever(key_retriever)
-    //         .build()
-    //         .unwrap();
-
-    // table_parquet_options.crypto.file_decryption =
-    //     Some(ConfigFileDecryptionProperties::from(&decryption_properties));
-
     table_parquet_options.crypto.configure_factory(
         ENCRYPTION_FACTORY_ID,
         &CometParquetEncryptionConfig::default(),
