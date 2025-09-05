@@ -32,28 +32,30 @@ import org.apache.parquet.crypto.keytools.FileKeyUnwrapper;
  */
 public class CometFileKeyUnwrapper {
 
-  /**
-   * Cache entry containing both Configuration and optional FileKeyUnwrapper. FileKeyUnwrapper is
-   * null until lazy instantiation occurs.
-   */
-  private static class FileDecryptionMetadata {
-    final Configuration hadoopConf;
-    volatile FileKeyUnwrapper keyUnwrapper;
+  private final FileKeyUnwrapper keyUnwrapper;
 
-    FileDecryptionMetadata(Configuration hadoopConf) {
-      this.hadoopConf = hadoopConf;
-      this.keyUnwrapper = null;
-    }
-
-    FileDecryptionMetadata(Configuration hadoopConf, FileKeyUnwrapper keyUnwrapper) {
-      this.hadoopConf = hadoopConf;
-      this.keyUnwrapper = keyUnwrapper;
-    }
-  }
-
-  // Combined cache for Configuration and FileKeyUnwrapper instances
-  private static final ConcurrentHashMap<String, FileDecryptionMetadata> CACHE =
+  // Cache for Configuration instances - still needed for compatibility
+  private static final ConcurrentHashMap<String, Configuration> HADOOP_CONF_CACHE =
       new ConcurrentHashMap<>();
+
+  /** Private constructor - use createInstance to create instances. */
+  private CometFileKeyUnwrapper(Configuration hadoopConf, String filePath) throws Exception {
+    // Ensure we have an absolute path
+    String absoluteFilePath = filePath;
+    if (!filePath.startsWith("/")) {
+      // If path is not absolute, prepend "/"
+      absoluteFilePath = "/" + filePath;
+    }
+
+    // Try using reflection to access the package-private constructor
+    // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path filePath)
+    java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
+        FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
+    constructor.setAccessible(true);
+
+    Path path = new Path(absoluteFilePath);
+    this.keyUnwrapper = constructor.newInstance(hadoopConf, path);
+  }
 
   /**
    * Preemptively stores the Hadoop Configuration for a given file path. This method should be
@@ -63,20 +65,18 @@ public class CometFileKeyUnwrapper {
    * @param hadoopConf The Hadoop Configuration to use for this file path
    */
   public static void storeHadoopConf(String filePath, Configuration hadoopConf) {
-    CACHE.put(filePath, new FileDecryptionMetadata(hadoopConf));
+    HADOOP_CONF_CACHE.put(filePath, hadoopConf);
   }
 
   /**
-   * Gets the decryption key for the given key metadata and file path. This method is called from
-   * native Rust code via JNI.
+   * Creates a new CometFileKeyUnwrapper instance for the given file path. The Hadoop Configuration
+   * should have been previously stored via storeHadoopConf.
    *
-   * @param keyMetadata The key metadata bytes from the Parquet file
-   * @param filePath The path to the Parquet file being decrypted
-   * @return The decrypted key bytes
-   * @throws Exception if key unwrapping fails
+   * @param filePath The path to the Parquet file
+   * @return A new CometFileKeyUnwrapper instance
+   * @throws Exception if instance creation fails
    */
-  public static byte[] getKey(byte[] keyMetadata, String filePath) throws Exception {
-
+  public static CometFileKeyUnwrapper createInstance(String filePath) throws Exception {
     // Ensure we have an absolute path
     String absoluteFilePath = filePath;
     if (!filePath.startsWith("/")) {
@@ -84,31 +84,24 @@ public class CometFileKeyUnwrapper {
       absoluteFilePath = "/" + filePath;
     }
 
-    // Get the cache entry for this file path
-    FileDecryptionMetadata cacheEntry = CACHE.get(absoluteFilePath);
-    if (cacheEntry == null) {
+    // Get the cached Hadoop Configuration for this file path
+    Configuration hadoopConf = HADOOP_CONF_CACHE.get(absoluteFilePath);
+    if (hadoopConf == null) {
       throw new RuntimeException(
           "Failed to retrieve stored hadoopConf for path: " + absoluteFilePath);
     }
 
-    // Check if FileKeyUnwrapper is already instantiated
-    FileKeyUnwrapper keyUnwrapper = cacheEntry.keyUnwrapper;
-    if (keyUnwrapper == null) {
-      // Try using reflection to access the package-private constructor
-      // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path
-      // filePath)
-      java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
-          FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
-      constructor.setAccessible(true);
+    return new CometFileKeyUnwrapper(hadoopConf, absoluteFilePath);
+  }
 
-      Path path = new Path(absoluteFilePath);
-      keyUnwrapper = constructor.newInstance(cacheEntry.hadoopConf, path);
-
-      // Update the cache entry with the instantiated FileKeyUnwrapper
-      cacheEntry = new FileDecryptionMetadata(cacheEntry.hadoopConf, keyUnwrapper);
-      CACHE.put(absoluteFilePath, cacheEntry);
-    }
-
+  /**
+   * Gets the decryption key for the given key metadata.
+   *
+   * @param keyMetadata The key metadata bytes from the Parquet file
+   * @return The decrypted key bytes
+   * @throws Exception if key unwrapping fails
+   */
+  public byte[] getKey(byte[] keyMetadata) throws Exception {
     // Call the getKey method to decrypt the key
     return keyUnwrapper.getKey(keyMetadata);
   }

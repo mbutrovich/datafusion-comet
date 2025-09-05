@@ -209,7 +209,8 @@ case class CometScanRule(session: SparkSession) extends Rule[SparkPlan] with Com
 //        }
 
         assert(
-          scanExec.inputRDD.sparkContext.hadoopConfiguration == scanExec.relation.sparkSession.sparkContext.hadoopConfiguration)
+          scanExec.inputRDD.sparkContext.hadoopConfiguration ==
+            scanExec.relation.sparkSession.sparkContext.hadoopConfiguration)
 
         if (encryptionEnabled) {
           scanExec.relation.inputFiles.foreach((filePath: String) => {

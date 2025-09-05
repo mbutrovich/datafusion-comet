@@ -16,7 +16,7 @@
 // under the License.
 
 use crate::execution::operators::ExecutionError;
-use crate::jvm_bridge::JVMClasses;
+use crate::jvm_bridge::{jni_new_global_ref, JVMClasses};
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkSchemaAdapterFactory;
 use arrow::datatypes::{Field, SchemaRef};
@@ -36,7 +36,9 @@ use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use datafusion_comet_spark_expr::EvalMode;
 use itertools::Itertools;
+use jni::objects::GlobalRef;
 use object_store::path::Path;
+use object_store::path::Path as ObjectStorePath;
 use parquet::encryption::decrypt::{FileDecryptionProperties, KeyRetriever};
 use parquet::encryption::encrypt::FileEncryptionProperties;
 use std::collections::HashMap;
@@ -172,17 +174,59 @@ impl EncryptionFactory for TestEncryptionFactory {
         _options: &EncryptionFactoryOptions,
         file_path: &Path,
     ) -> Result<Option<FileDecryptionProperties>, DataFusionError> {
+        let key_retriever =
+            TestKeyRetriever::new(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
         let decryption_properties =
-            FileDecryptionProperties::with_key_retriever(Arc::new(TestKeyRetriever {
-                file_path: file_path.to_string(),
-            }))
-            .build()?;
+            FileDecryptionProperties::with_key_retriever(Arc::new(key_retriever)).build()?;
         Ok(Some(decryption_properties))
     }
 }
 
 struct TestKeyRetriever {
-    file_path: String,
+    file_key_unwrapper: GlobalRef,
+}
+
+impl TestKeyRetriever {
+    fn new(file_path: &ObjectStorePath) -> Result<Self, ExecutionError> {
+        let mut env = JVMClasses::get_env()
+            .map_err(|e| ExecutionError::GeneralError(format!("Failed to get JNI env: {}", e)))?;
+
+        // Get the FileKeyUnwrapper class
+        let jvm_classes = JVMClasses::get();
+        let file_key_unwrapper_class = &jvm_classes.file_key_unwrapper;
+
+        // Convert file_path to JString
+        let file_path_jstring = env.new_string(file_path.as_ref()).map_err(|e| {
+            ExecutionError::GeneralError(format!("Failed to create JString: {}", e))
+        })?;
+
+        // Create FileKeyUnwrapper instance using constructor
+        let file_key_unwrapper_obj = unsafe {
+            env.call_static_method_unchecked(
+                &file_key_unwrapper_class.class,
+                file_key_unwrapper_class.method_create_instance,
+                file_key_unwrapper_class.method_create_instance_ret.clone(),
+                &[jni::objects::JValue::from(&file_path_jstring).as_jni()],
+            )
+        }
+        .map_err(|e| {
+            ExecutionError::GeneralError(format!(
+                "Failed to create FileKeyUnwrapper instance: {}",
+                e
+            ))
+        })?
+        .l()
+        .map_err(|e| ExecutionError::GeneralError(format!("Failed to extract object: {}", e)))?;
+
+        // Create global reference to keep the FileKeyUnwrapper alive
+        let global_ref = jni_new_global_ref!(env, file_key_unwrapper_obj).map_err(|e| {
+            ExecutionError::GeneralError(format!("Failed to create global ref: {}", e))
+        })?;
+
+        Ok(TestKeyRetriever {
+            file_key_unwrapper: global_ref,
+        })
+    }
 }
 
 impl KeyRetriever for TestKeyRetriever {
@@ -194,23 +238,17 @@ impl KeyRetriever for TestKeyRetriever {
         // Convert key_metadata to JByteArray
         let key_metadata_array = env.byte_array_from_slice(key_metadata).unwrap();
 
-        // Convert file_path to JString
-        let file_path_jstring = env.new_string(&self.file_path).unwrap();
-
-        // Get the CometFileKeyUnwrapper class and method
+        // Get the FileKeyUnwrapper class and method
         let jvm_classes = JVMClasses::get();
-        let file_key_unwrapper = &jvm_classes.file_key_unwrapper;
+        let file_key_unwrapper_class = &jvm_classes.file_key_unwrapper;
 
-        // Call static method CometFileKeyUnwrapper.getKey(byte[], String) -> byte[]
+        // Call instance method FileKeyUnwrapper.getKey(byte[]) -> byte[]
         let result = unsafe {
-            env.call_static_method_unchecked(
-                &file_key_unwrapper.class,
-                file_key_unwrapper.method_get_key,
-                file_key_unwrapper.method_get_key_ret.clone(),
-                &[
-                    jni::objects::JValue::from(&key_metadata_array).as_jni(),
-                    jni::objects::JValue::from(&file_path_jstring).as_jni(),
-                ],
+            env.call_method_unchecked(
+                self.file_key_unwrapper.as_obj(),
+                file_key_unwrapper_class.method_get_key,
+                file_key_unwrapper_class.method_get_key_ret.clone(),
+                &[jni::objects::JValue::from(&key_metadata_array).as_jni()],
             )
         };
 
