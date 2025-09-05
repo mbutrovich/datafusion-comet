@@ -304,11 +304,6 @@ fn prepare_datafusion_session_context(
     session_ctx.register_udf(ScalarUDF::new_from_impl(SparkSha2::default()));
     session_ctx.register_udf(ScalarUDF::new_from_impl(CharFunc::default()));
 
-    // Register an `EncryptionFactory` implementation to be used for Parquet encryption
-    // in the runtime environment.
-    // `EncryptionFactory` instances are registered with a name to identify them so
-    // they can be later referenced in configuration options, and it's possible to register
-    // multiple different factories to handle different ways of encrypting Parquet.
     let encryption_factory = TestEncryptionFactory::default();
     session_ctx
         .runtime_env()
