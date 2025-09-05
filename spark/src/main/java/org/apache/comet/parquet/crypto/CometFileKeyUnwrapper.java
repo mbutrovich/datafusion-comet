@@ -32,12 +32,27 @@ import org.apache.parquet.crypto.keytools.FileKeyUnwrapper;
  */
 public class CometFileKeyUnwrapper {
 
-  // Cache FileKeyUnwrapper instances by file path to reuse KMS configuration
-  private static final ConcurrentHashMap<String, FileKeyUnwrapper> UNWRAPPER_CACHE =
-      new ConcurrentHashMap<>();
+  /**
+   * Cache entry containing both Configuration and optional FileKeyUnwrapper. FileKeyUnwrapper is
+   * null until lazy instantiation occurs.
+   */
+  private static class FileDecryptionMetadata {
+    final Configuration hadoopConf;
+    volatile FileKeyUnwrapper keyUnwrapper;
 
-  // Cache mapping from file path to its corresponding Hadoop Configuration
-  private static final ConcurrentHashMap<String, Configuration> HADOOP_CONF_CACHE =
+    FileDecryptionMetadata(Configuration hadoopConf) {
+      this.hadoopConf = hadoopConf;
+      this.keyUnwrapper = null;
+    }
+
+    FileDecryptionMetadata(Configuration hadoopConf, FileKeyUnwrapper keyUnwrapper) {
+      this.hadoopConf = hadoopConf;
+      this.keyUnwrapper = keyUnwrapper;
+    }
+  }
+
+  // Combined cache for Configuration and FileKeyUnwrapper instances
+  private static final ConcurrentHashMap<String, FileDecryptionMetadata> CACHE =
       new ConcurrentHashMap<>();
 
   /**
@@ -48,7 +63,7 @@ public class CometFileKeyUnwrapper {
    * @param hadoopConf The Hadoop Configuration to use for this file path
    */
   public static void storeHadoopConf(String filePath, Configuration hadoopConf) {
-    HADOOP_CONF_CACHE.put(filePath, hadoopConf);
+    CACHE.put(filePath, new FileDecryptionMetadata(hadoopConf));
   }
 
   /**
@@ -69,43 +84,32 @@ public class CometFileKeyUnwrapper {
       absoluteFilePath = "/" + filePath;
     }
 
-    try {
-      // Try to get cached FileKeyUnwrapper first
-      FileKeyUnwrapper keyUnwrapper = UNWRAPPER_CACHE.get(absoluteFilePath);
-
-      if (keyUnwrapper == null) {
-
-        // Get the Hadoop configuration for this file path, or create a default one
-        Configuration hadoopConf = HADOOP_CONF_CACHE.get(absoluteFilePath);
-        if (hadoopConf == null) {
-          throw new RuntimeException(
-              "Failed to retrieve stored hadoopConf for path: " + absoluteFilePath);
-        }
-
-        // Try using reflection to access the package-private constructor
-        // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path filePath)
-        java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
-            FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
-        constructor.setAccessible(true);
-
-        Path path = new Path(absoluteFilePath);
-        keyUnwrapper = constructor.newInstance(hadoopConf, path);
-
-        // Cache the instance for future use
-        UNWRAPPER_CACHE.put(absoluteFilePath, keyUnwrapper);
-      }
-
-      // Call the getKey method to decrypt the key
-      return keyUnwrapper.getKey(keyMetadata);
-    } catch (Exception e) {
-      System.err.println(
-          "Exception in CometFileKeyUnwrapper.getKey: "
-              + e.getClass().getSimpleName()
-              + ": "
-              + e.getMessage());
-      e.printStackTrace();
-      System.err.flush();
-      throw new RuntimeException("Failed to decrypt key: " + e.getMessage(), e);
+    // Get the cache entry for this file path
+    FileDecryptionMetadata cacheEntry = CACHE.get(absoluteFilePath);
+    if (cacheEntry == null) {
+      throw new RuntimeException(
+          "Failed to retrieve stored hadoopConf for path: " + absoluteFilePath);
     }
+
+    // Check if FileKeyUnwrapper is already instantiated
+    FileKeyUnwrapper keyUnwrapper = cacheEntry.keyUnwrapper;
+    if (keyUnwrapper == null) {
+      // Try using reflection to access the package-private constructor
+      // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path
+      // filePath)
+      java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
+          FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
+      constructor.setAccessible(true);
+
+      Path path = new Path(absoluteFilePath);
+      keyUnwrapper = constructor.newInstance(cacheEntry.hadoopConf, path);
+
+      // Update the cache entry with the instantiated FileKeyUnwrapper
+      cacheEntry = new FileDecryptionMetadata(cacheEntry.hadoopConf, keyUnwrapper);
+      CACHE.put(absoluteFilePath, cacheEntry);
+    }
+
+    // Call the getKey method to decrypt the key
+    return keyUnwrapper.getKey(keyMetadata);
   }
 }
