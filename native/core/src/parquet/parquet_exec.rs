@@ -317,59 +317,21 @@ struct TestKeyRetriever {
 impl KeyRetriever for TestKeyRetriever {
     /// Get a data encryption key using the metadata stored in the Parquet file.
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
-        println!(
-            "TestKeyRetriever::retrieve_key called with metadata length: {}",
-            key_metadata.len()
-        );
-        let key_metadata_string = std::str::from_utf8(key_metadata)?;
-        println!("key_metadata_string {:?}", key_metadata_string);
-        println!("File path: {}", self.file_path);
-        io::stdout().flush().expect("Failed to flush stdout");
 
         // Get JNI environment
-        println!("Getting JNI environment...");
-        io::stdout().flush().expect("Failed to flush stdout");
-        let mut env = JVMClasses::get_env().map_err(|e| {
-            println!("Failed to get JNI environment: {}", e);
-            io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to get JNI environment: {}", e))
-        })?;
-        println!("JNI environment obtained successfully");
-        io::stdout().flush().expect("Failed to flush stdout");
+        let mut env = JVMClasses::get_env().unwrap();
 
         // Convert key_metadata to JByteArray
-        println!("Converting key_metadata to JByteArray...");
-        io::stdout().flush().expect("Failed to flush stdout");
-        let key_metadata_array = env.byte_array_from_slice(key_metadata).map_err(|e| {
-            println!("Failed to create JByteArray: {}", e);
-            io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to create JByteArray: {}", e))
-        })?;
-        println!("JByteArray created successfully");
-        io::stdout().flush().expect("Failed to flush stdout");
+        let key_metadata_array = env.byte_array_from_slice(key_metadata).unwrap();
 
         // Convert file_path to JString
-        println!("Converting file_path to JString...");
-        io::stdout().flush().expect("Failed to flush stdout");
-        let file_path_jstring = env.new_string(&self.file_path).map_err(|e| {
-            println!("Failed to create JString: {}", e);
-            io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to create JString: {}", e))
-        })?;
-        println!("JString created successfully");
-        io::stdout().flush().expect("Failed to flush stdout");
+        let file_path_jstring = env.new_string(&self.file_path).unwrap();
 
         // Get the CometFileKeyUnwrapper class and method
-        println!("Getting CometFileKeyUnwrapper class and method...");
-        io::stdout().flush().expect("Failed to flush stdout");
         let jvm_classes = JVMClasses::get();
         let file_key_unwrapper = &jvm_classes.file_key_unwrapper;
-        println!("CometFileKeyUnwrapper class obtained successfully");
-        io::stdout().flush().expect("Failed to flush stdout");
 
         // Call static method CometFileKeyUnwrapper.getKey(byte[], String) -> byte[]
-        println!("Calling CometFileKeyUnwrapper.getKey via JNI...");
-        io::stdout().flush().expect("Failed to flush stdout");
         let result = unsafe {
             env.call_static_method_unchecked(
                 &file_key_unwrapper.class,
@@ -383,65 +345,31 @@ impl KeyRetriever for TestKeyRetriever {
         };
 
         // Check for Java exceptions before processing the result
-        if let Some(exception) = crate::jvm_bridge::check_exception(&mut env).map_err(|e| {
-            println!("Failed to check for JNI exceptions: {}", e);
-            io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to check for JNI exceptions: {}", e))
-        })? {
-            println!(
-                "Java exception occurred during CometFileKeyUnwrapper.getKey call: {}",
-                exception
-            );
-            io::stdout().flush().expect("Failed to flush stdout");
-            return Err(ParquetError::General(format!(
-                "Java exception in CometFileKeyUnwrapper.getKey: {}",
-                exception
-            )));
-        }
+        // if let Some(exception) = crate::jvm_bridge::check_exception(&mut env).map_err(|e| {
+        //     println!("Failed to check for JNI exceptions: {}", e);
+        //     io::stdout().flush().expect("Failed to flush stdout");
+        //     ParquetError::General(format!("Failed to check for JNI exceptions: {}", e))
+        // })? {
+        //     println!(
+        //         "Java exception occurred during CometFileKeyUnwrapper.getKey call: {}",
+        //         exception
+        //     );
+        //     io::stdout().flush().expect("Failed to flush stdout");
+        //     return Err(ParquetError::General(format!(
+        //         "Java exception in CometFileKeyUnwrapper.getKey: {}",
+        //         exception
+        //     )));
+        // }
 
-        let result = result.map_err(|e| {
-            println!("Failed to call CometFileKeyUnwrapper.getKey: {}", e);
-            io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!(
-                "Failed to call CometFileKeyUnwrapper.getKey: {}",
-                e
-            ))
-        })?;
-        println!("JNI call completed successfully");
-        io::stdout().flush().expect("Failed to flush stdout");
+        let result = result.unwrap();
 
         // Extract the byte array from the result
-        println!("Extracting byte array from JNI result...");
-        io::stdout().flush().expect("Failed to flush stdout");
-        let result_array = result.l().map_err(|e| {
-            println!("Failed to get object from result: {}", e);
-            io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to get object from result: {}", e))
-        })?;
-        println!("Object extracted from result successfully");
-        io::stdout().flush().expect("Failed to flush stdout");
+        let result_array = result.l().unwrap();
 
         // Convert JObject to JByteArray and then to Vec<u8>
-        println!("Converting JObject to JByteArray...");
-        io::stdout().flush().expect("Failed to flush stdout");
         let byte_array: jni::objects::JByteArray = result_array.into();
-        println!("JByteArray conversion successful");
-        io::stdout().flush().expect("Failed to flush stdout");
 
-        println!("Converting JByteArray to Vec<u8>...");
-        io::stdout().flush().expect("Failed to flush stdout");
-        let result_vec = env.convert_byte_array(&byte_array).map_err(|e| {
-            println!("Failed to convert result byte array: {}", e);
-            io::stdout().flush().expect("Failed to flush stdout");
-            ParquetError::General(format!("Failed to convert result byte array: {}", e))
-        })?;
-        println!("Vec<u8> conversion successful");
-        io::stdout().flush().expect("Failed to flush stdout");
-
-        println!("result byte array: {:?}", result_vec);
-        io::stdout().flush().expect("Failed to flush stdout");
-        println!("TestKeyRetriever::retrieve_key completed successfully");
-        io::stdout().flush().expect("Failed to flush stdout");
+        let result_vec = env.convert_byte_array(&byte_array).unwrap();
         Ok(result_vec)
     }
 }
