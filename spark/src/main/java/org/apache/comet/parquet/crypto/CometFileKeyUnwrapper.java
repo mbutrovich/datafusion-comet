@@ -40,12 +40,6 @@ public class CometFileKeyUnwrapper {
 
   /** Private constructor - use createInstance to create instances. */
   private CometFileKeyUnwrapper(Configuration hadoopConf, String filePath) throws Exception {
-    // Ensure we have an absolute path
-    String absoluteFilePath = filePath;
-    if (!filePath.startsWith("/")) {
-      // If path is not absolute, prepend "/"
-      absoluteFilePath = "/" + filePath;
-    }
 
     // Try using reflection to access the package-private constructor
     // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path filePath)
@@ -53,7 +47,7 @@ public class CometFileKeyUnwrapper {
         FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
     constructor.setAccessible(true);
 
-    Path path = new Path(absoluteFilePath);
+    Path path = new Path(filePath);
     this.keyUnwrapper = constructor.newInstance(hadoopConf, path);
   }
 
@@ -77,21 +71,14 @@ public class CometFileKeyUnwrapper {
    * @throws Exception if instance creation fails
    */
   public static CometFileKeyUnwrapper createInstance(String filePath) throws Exception {
-    // Ensure we have an absolute path
-    String absoluteFilePath = filePath;
-    if (!filePath.startsWith("/")) {
-      // If path is not absolute, prepend "/"
-      absoluteFilePath = "/" + filePath;
-    }
 
     // Get the cached Hadoop Configuration for this file path
-    Configuration hadoopConf = HADOOP_CONF_CACHE.get(absoluteFilePath);
+    Configuration hadoopConf = HADOOP_CONF_CACHE.get(filePath);
     if (hadoopConf == null) {
-      throw new RuntimeException(
-          "Failed to retrieve stored hadoopConf for path: " + absoluteFilePath);
+      throw new RuntimeException("Failed to retrieve stored hadoopConf for path: " + filePath);
     }
 
-    return new CometFileKeyUnwrapper(hadoopConf, absoluteFilePath);
+    return new CometFileKeyUnwrapper(hadoopConf, filePath);
   }
 
   /**

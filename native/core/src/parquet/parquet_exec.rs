@@ -39,7 +39,6 @@ use datafusion_comet_spark_expr::EvalMode;
 use itertools::Itertools;
 use jni::objects::GlobalRef;
 use object_store::path::Path;
-use object_store::path::Path as ObjectStorePath;
 use parquet::encryption::decrypt::{FileDecryptionProperties, KeyRetriever};
 use parquet::encryption::encrypt::FileEncryptionProperties;
 use std::collections::HashMap;
@@ -80,7 +79,7 @@ pub(crate) fn init_datasource_exec(
     session_ctx: &Arc<SessionContext>,
 ) -> Result<Arc<DataSourceExec>, ExecutionError> {
     let (table_parquet_options, spark_parquet_options) =
-        get_options(session_timezone, case_sensitive);
+        get_options(session_timezone, case_sensitive, &object_store_url);
 
     let mut parquet_source = ParquetSource::new(table_parquet_options);
 
@@ -177,8 +176,9 @@ impl EncryptionFactory for CometEncryptionFactory {
         options: &EncryptionFactoryOptions,
         file_path: &Path,
     ) -> Result<Option<FileDecryptionProperties>, DataFusionError> {
-        let _config: CometEncryptionConfig = options.to_extension_options()?;
-        let key_retriever = CometKeyRetriever::new(file_path)
+        let config: CometEncryptionConfig = options.to_extension_options()?;
+        let full_path: String = config.url_base + file_path.as_ref();
+        let key_retriever = CometKeyRetriever::new(&full_path)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
         let decryption_properties =
             FileDecryptionProperties::with_key_retriever(Arc::new(key_retriever)).build()?;
@@ -191,7 +191,7 @@ struct CometKeyRetriever {
 }
 
 impl CometKeyRetriever {
-    fn new(file_path: &ObjectStorePath) -> Result<Self, ExecutionError> {
+    fn new(file_path: &str) -> Result<Self, ExecutionError> {
         let mut env = JVMClasses::get_env()
             .map_err(|e| ExecutionError::GeneralError(format!("Failed to get JNI env: {}", e)))?;
 
@@ -200,7 +200,7 @@ impl CometKeyRetriever {
         let file_key_unwrapper_class = &jvm_classes.file_key_unwrapper;
 
         // Convert file_path to JString
-        let file_path_jstring = env.new_string(file_path.as_ref()).map_err(|e| {
+        let file_path_jstring = env.new_string(file_path).map_err(|e| {
             ExecutionError::GeneralError(format!("Failed to create JString: {}", e))
         })?;
 
@@ -272,6 +272,7 @@ impl KeyRetriever for CometKeyRetriever {
 fn get_options(
     session_timezone: &str,
     case_sensitive: bool,
+    object_store_url: &ObjectStoreUrl,
 ) -> (TableParquetOptions, SparkParquetOptions) {
     let mut table_parquet_options = TableParquetOptions::new();
     table_parquet_options.global.pushdown_filters = true;
@@ -282,9 +283,12 @@ fn get_options(
     spark_parquet_options.allow_cast_unsigned_ints = true;
     spark_parquet_options.case_sensitive = case_sensitive;
 
-    table_parquet_options
-        .crypto
-        .configure_factory(ENCRYPTION_FACTORY_ID, &CometEncryptionConfig::default());
+    table_parquet_options.crypto.configure_factory(
+        ENCRYPTION_FACTORY_ID,
+        &CometEncryptionConfig {
+            url_base: object_store_url.to_string(),
+        },
+    );
 
     (table_parquet_options, spark_parquet_options)
 }

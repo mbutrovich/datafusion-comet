@@ -214,9 +214,8 @@ case class CometScanRule(session: SparkSession) extends Rule[SparkPlan] with Com
 
         if (encryptionEnabled) {
           scanExec.relation.inputFiles.foreach((filePath: String) => {
-            val absolutePath = new URI(filePath).getPath;
             CometFileKeyUnwrapper.storeHadoopConf(
-              absolutePath,
+              filePath,
               scanExec.relation.sparkSession.sparkContext.hadoopConfiguration)
           })
         }
