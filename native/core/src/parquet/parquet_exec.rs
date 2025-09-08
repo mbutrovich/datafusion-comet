@@ -144,15 +144,16 @@ pub const ENCRYPTION_FACTORY_ID: &str = "comet.jni_kms_encryption";
 
 // Options used to configure our example encryption factory
 extensions_options! {
-    struct CometParquetEncryptionConfig {
+    struct CometEncryptionConfig {
+        pub url_base: String, default = "file:///".into()
     }
 }
 #[derive(Default, Debug)]
-pub struct TestEncryptionFactory {}
+pub struct CometEncryptionFactory {}
 
 /// `EncryptionFactory` is a DataFusion trait for types that generate
 /// file encryption and decryption properties.
-impl EncryptionFactory for TestEncryptionFactory {
+impl EncryptionFactory for CometEncryptionFactory {
     fn get_file_encryption_properties(
         &self,
         _options: &EncryptionFactoryOptions,
@@ -171,22 +172,23 @@ impl EncryptionFactory for TestEncryptionFactory {
     /// that can determine the keys using the encryption metadata.
     fn get_file_decryption_properties(
         &self,
-        _options: &EncryptionFactoryOptions,
+        options: &EncryptionFactoryOptions,
         file_path: &Path,
     ) -> Result<Option<FileDecryptionProperties>, DataFusionError> {
-        let key_retriever =
-            TestKeyRetriever::new(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let _config: CometEncryptionConfig = options.to_extension_options()?;
+        let key_retriever = CometKeyRetriever::new(file_path)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
         let decryption_properties =
             FileDecryptionProperties::with_key_retriever(Arc::new(key_retriever)).build()?;
         Ok(Some(decryption_properties))
     }
 }
 
-struct TestKeyRetriever {
+struct CometKeyRetriever {
     file_key_unwrapper: GlobalRef,
 }
 
-impl TestKeyRetriever {
+impl CometKeyRetriever {
     fn new(file_path: &ObjectStorePath) -> Result<Self, ExecutionError> {
         let mut env = JVMClasses::get_env()
             .map_err(|e| ExecutionError::GeneralError(format!("Failed to get JNI env: {}", e)))?;
@@ -223,13 +225,13 @@ impl TestKeyRetriever {
             ExecutionError::GeneralError(format!("Failed to create global ref: {}", e))
         })?;
 
-        Ok(TestKeyRetriever {
+        Ok(CometKeyRetriever {
             file_key_unwrapper: global_ref,
         })
     }
 }
 
-impl KeyRetriever for TestKeyRetriever {
+impl KeyRetriever for CometKeyRetriever {
     /// Get a data encryption key using the metadata stored in the Parquet file.
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
         // Get JNI environment
@@ -278,10 +280,9 @@ fn get_options(
     spark_parquet_options.allow_cast_unsigned_ints = true;
     spark_parquet_options.case_sensitive = case_sensitive;
 
-    table_parquet_options.crypto.configure_factory(
-        ENCRYPTION_FACTORY_ID,
-        &CometParquetEncryptionConfig::default(),
-    );
+    table_parquet_options
+        .crypto
+        .configure_factory(ENCRYPTION_FACTORY_ID, &CometEncryptionConfig::default());
 
     (table_parquet_options, spark_parquet_options)
 }

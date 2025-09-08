@@ -55,7 +55,7 @@ use crate::execution::utils::SparkArrowConvert;
 use crate::jvm_bridge::JVMClasses;
 use crate::parquet::data_type::AsBytes;
 use crate::parquet::parquet_exec::{
-    init_datasource_exec, TestEncryptionFactory, ENCRYPTION_FACTORY_ID,
+    init_datasource_exec, CometEncryptionFactory, ENCRYPTION_FACTORY_ID,
 };
 use crate::parquet::parquet_support::prepare_object_store_with_configs;
 use arrow::array::{Array, RecordBatch};
@@ -770,7 +770,7 @@ pub unsafe extern "system" fn Java_org_apache_comet_parquet_Native_initRecordBat
             .unwrap()
             .into();
 
-        let encryption_factory = TestEncryptionFactory::default();
+        let encryption_factory = CometEncryptionFactory::default();
         session_ctx
             .runtime_env()
             .register_parquet_encryption_factory(

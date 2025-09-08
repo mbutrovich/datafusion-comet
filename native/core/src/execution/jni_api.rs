@@ -75,7 +75,7 @@ use crate::execution::spark_plan::SparkPlan;
 
 use crate::execution::tracing::{log_memory_usage, trace_begin, trace_end, with_trace};
 
-use crate::parquet::parquet_exec::{TestEncryptionFactory, ENCRYPTION_FACTORY_ID};
+use crate::parquet::parquet_exec::{CometEncryptionFactory, ENCRYPTION_FACTORY_ID};
 use datafusion_comet_proto::spark_operator::operator::OpStruct;
 use log::info;
 use once_cell::sync::Lazy;
@@ -304,7 +304,7 @@ fn prepare_datafusion_session_context(
     session_ctx.register_udf(ScalarUDF::new_from_impl(SparkSha2::default()));
     session_ctx.register_udf(ScalarUDF::new_from_impl(CharFunc::default()));
 
-    let encryption_factory = TestEncryptionFactory::default();
+    let encryption_factory = CometEncryptionFactory::default();
     session_ctx
         .runtime_env()
         .register_parquet_encryption_factory(ENCRYPTION_FACTORY_ID, Arc::new(encryption_factory));
