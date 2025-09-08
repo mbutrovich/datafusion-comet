@@ -20,6 +20,7 @@ use crate::jvm_bridge::{jni_new_global_ref, JVMClasses};
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkSchemaAdapterFactory;
 use arrow::datatypes::{Field, SchemaRef};
+use async_trait::async_trait;
 use datafusion::common::extensions_options;
 use datafusion::config::{EncryptionFactoryOptions, TableParquetOptions};
 use datafusion::datasource::listing::PartitionedFile;
@@ -153,8 +154,9 @@ pub struct CometEncryptionFactory {}
 
 /// `EncryptionFactory` is a DataFusion trait for types that generate
 /// file encryption and decryption properties.
+#[async_trait]
 impl EncryptionFactory for CometEncryptionFactory {
-    fn get_file_encryption_properties(
+    async fn get_file_encryption_properties(
         &self,
         _options: &EncryptionFactoryOptions,
         _schema: &SchemaRef,
@@ -170,7 +172,7 @@ impl EncryptionFactory for CometEncryptionFactory {
     /// Generate file decryption properties to use when reading a Parquet file.
     /// Rather than provide the AES keys directly for decryption, we set a `KeyRetriever`
     /// that can determine the keys using the encryption metadata.
-    fn get_file_decryption_properties(
+    async fn get_file_decryption_properties(
         &self,
         options: &EncryptionFactoryOptions,
         file_path: &Path,
