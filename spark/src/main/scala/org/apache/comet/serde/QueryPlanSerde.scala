@@ -75,6 +75,8 @@ object QueryPlanSerde extends Logging with CometExprShim {
    * Mapping of Spark expression class to Comet expression handler.
    */
   private val exprSerdeMap: Map[Class[_ <: Expression], CometExpressionSerde[_]] = Map(
+    classOf[AttributeReference] -> CometAttributeReference,
+    classOf[Alias] -> CometAlias,
     classOf[Add] -> CometAdd,
     classOf[Subtract] -> CometSubtract,
     classOf[Multiply] -> CometMultiply,
@@ -178,6 +180,7 @@ object QueryPlanSerde extends Logging with CometExprShim {
     classOf[DateSub] -> CometDateSub,
     classOf[TruncDate] -> CometTruncDate,
     classOf[TruncTimestamp] -> CometTruncTimestamp,
+    classOf[Cast] -> CometCast,
     classOf[CreateNamedStruct] -> CometCreateNamedStruct,
     classOf[GetStructField] -> CometGetStructField,
     classOf[GetArrayStructFields] -> CometGetArrayStructFields,
@@ -189,9 +192,12 @@ object QueryPlanSerde extends Logging with CometExprShim {
     classOf[Log] -> CometLog,
     classOf[Log10] -> CometLog10,
     classOf[Log2] -> CometLog2,
+    classOf[Hex] -> CometHex,
+    classOf[Unhex] -> CometUnhex,
     classOf[Pow] -> CometScalarFunction[Pow]("pow"),
     classOf[If] -> CometIf,
-    classOf[CaseWhen] -> CometCaseWhen)
+    classOf[CaseWhen] -> CometCaseWhen,
+    classOf[Coalesce] -> CometCoalesce)
 
   /**
    * Mapping of Spark aggregate expression class to Comet expression handler.
@@ -512,7 +518,7 @@ object QueryPlanSerde extends Logging with CometExprShim {
 
     if (aggExpr.isDistinct) {
       // https://github.com/apache/datafusion-comet/issues/1260
-      withInfo(aggExpr, "distinct aggregates are not supported")
+      withInfo(aggExpr, s"distinct aggregate not supported: $aggExpr")
       return None
     }
 
@@ -538,81 +544,6 @@ object QueryPlanSerde extends Logging with CometExprShim {
       case CometEvalMode.TRY => ExprOuterClass.EvalMode.TRY
       case CometEvalMode.ANSI => ExprOuterClass.EvalMode.ANSI
       case _ => throw new IllegalStateException(s"Invalid evalMode $evalMode")
-    }
-  }
-
-  /**
-   * Wrap an expression in a cast.
-   */
-  def castToProto(
-      expr: Expression,
-      timeZoneId: Option[String],
-      dt: DataType,
-      childExpr: Expr,
-      evalMode: CometEvalMode.Value): Option[Expr] = {
-    serializeDataType(dt) match {
-      case Some(dataType) =>
-        val castBuilder = ExprOuterClass.Cast.newBuilder()
-        castBuilder.setChild(childExpr)
-        castBuilder.setDatatype(dataType)
-        castBuilder.setEvalMode(evalModeToProto(evalMode))
-        castBuilder.setAllowIncompat(CometConf.COMET_CAST_ALLOW_INCOMPATIBLE.get())
-        castBuilder.setTimezone(timeZoneId.getOrElse("UTC"))
-        Some(
-          ExprOuterClass.Expr
-            .newBuilder()
-            .setCast(castBuilder)
-            .build())
-      case _ =>
-        withInfo(expr, s"Unsupported datatype in castToProto: $dt")
-        None
-    }
-  }
-
-  def handleCast(
-      expr: Expression,
-      child: Expression,
-      inputs: Seq[Attribute],
-      binding: Boolean,
-      dt: DataType,
-      timeZoneId: Option[String],
-      evalMode: CometEvalMode.Value): Option[Expr] = {
-
-    val childExpr = exprToProtoInternal(child, inputs, binding)
-    if (childExpr.isDefined) {
-      val castSupport =
-        CometCast.isSupported(child.dataType, dt, timeZoneId, evalMode)
-
-      def getIncompatMessage(reason: Option[String]): String =
-        "Comet does not guarantee correct results for cast " +
-          s"from ${child.dataType} to $dt " +
-          s"with timezone $timeZoneId and evalMode $evalMode" +
-          reason.map(str => s" ($str)").getOrElse("")
-
-      castSupport match {
-        case Compatible(_) =>
-          castToProto(expr, timeZoneId, dt, childExpr.get, evalMode)
-        case Incompatible(reason) =>
-          if (CometConf.COMET_CAST_ALLOW_INCOMPATIBLE.get()) {
-            logWarning(getIncompatMessage(reason))
-            castToProto(expr, timeZoneId, dt, childExpr.get, evalMode)
-          } else {
-            withInfo(
-              expr,
-              s"${getIncompatMessage(reason)}. To enable all incompatible casts, set " +
-                s"${CometConf.COMET_CAST_ALLOW_INCOMPATIBLE.key}=true")
-            None
-          }
-        case Unsupported =>
-          withInfo(
-            expr,
-            s"Unsupported cast from ${child.dataType} to $dt " +
-              s"with timezone $timeZoneId and evalMode $evalMode")
-          None
-      }
-    } else {
-      withInfo(expr, child)
-      None
     }
   }
 
@@ -668,8 +599,8 @@ object QueryPlanSerde extends Logging with CometExprShim {
 
     def convert[T <: Expression](expr: T, handler: CometExpressionSerde[T]): Option[Expr] = {
       handler.getSupportLevel(expr) match {
-        case Unsupported =>
-          withInfo(expr, s"$expr is not supported.")
+        case Unsupported(notes) =>
+          withInfo(expr, notes.getOrElse(""))
           None
         case Incompatible(notes) =>
           if (CometConf.COMET_EXPR_ALLOW_INCOMPATIBLE.get()) {
@@ -697,13 +628,6 @@ object QueryPlanSerde extends Logging with CometExprShim {
     }
 
     versionSpecificExprToProtoInternal(expr, inputs, binding).orElse(expr match {
-      case a @ Alias(_, _) =>
-        val r = exprToProtoInternal(a.child, inputs, binding)
-        if (r.isEmpty) {
-          withInfo(expr, a.child)
-        }
-        r
-
       case cast @ Cast(_: Literal, dataType, _, _) =>
         // This can happen after promoting decimal precisions
         val value = cast.eval()
@@ -711,17 +635,8 @@ object QueryPlanSerde extends Logging with CometExprShim {
 
       case UnaryExpression(child) if expr.prettyName == "trycast" =>
         val timeZoneId = SQLConf.get.sessionLocalTimeZone
-        handleCast(
-          expr,
-          child,
-          inputs,
-          binding,
-          expr.dataType,
-          Some(timeZoneId),
-          CometEvalMode.TRY)
-
-      case c @ Cast(child, dt, timeZoneId, _) =>
-        handleCast(expr, child, inputs, binding, dt, timeZoneId, evalMode(c))
+        val cast = Cast(child, expr.dataType, Some(timeZoneId), EvalMode.TRY)
+        convert(cast, CometCast)
 
       case Literal(value, dataType)
           if supportedDataType(
@@ -871,33 +786,37 @@ object QueryPlanSerde extends Logging with CometExprShim {
         val child = expr.asInstanceOf[UnaryExpression].child
         val timezoneId = expr.asInstanceOf[TimeZoneAwareExpression].timeZoneId
 
-        handleCast(
-          expr,
-          child,
-          inputs,
-          binding,
+        val castSupported = CometCast.isSupported(
+          child.dataType,
           DataTypes.StringType,
           timezoneId,
-          CometEvalMode.TRY) match {
-          case Some(_) =>
-            exprToProtoInternal(child, inputs, binding) match {
-              case Some(p) =>
-                val toPrettyString = ExprOuterClass.ToPrettyString
+          CometEvalMode.TRY)
+
+        val isCastSupported = castSupported match {
+          case Compatible(_) => true
+          case Incompatible(_) => true
+          case _ => false
+        }
+
+        if (isCastSupported) {
+          exprToProtoInternal(child, inputs, binding) match {
+            case Some(p) =>
+              val toPrettyString = ExprOuterClass.ToPrettyString
+                .newBuilder()
+                .setChild(p)
+                .setTimezone(timezoneId.getOrElse("UTC"))
+                .build()
+              Some(
+                ExprOuterClass.Expr
                   .newBuilder()
-                  .setChild(p)
-                  .setTimezone(timezoneId.getOrElse("UTC"))
-                  .build()
-                Some(
-                  ExprOuterClass.Expr
-                    .newBuilder()
-                    .setToPrettyString(toPrettyString)
-                    .build())
-              case _ =>
-                withInfo(expr, child)
-                None
-            }
-          case None =>
-            None
+                  .setToPrettyString(toPrettyString)
+                  .build())
+            case _ =>
+              withInfo(expr, child)
+              None
+          }
+        } else {
+          None
         }
 
       case SortOrder(child, direction, nullOrdering, _) =>
@@ -954,51 +873,6 @@ object QueryPlanSerde extends Logging with CometExprShim {
           None
         }
 
-      case attr: AttributeReference =>
-        val dataType = serializeDataType(attr.dataType)
-
-        if (dataType.isDefined) {
-          if (binding) {
-            // Spark may produce unresolvable attributes in some cases,
-            // for example https://github.com/apache/datafusion-comet/issues/925.
-            // So, we allow the binding to fail.
-            val boundRef: Any = BindReferences
-              .bindReference(attr, inputs, allowFailures = true)
-
-            if (boundRef.isInstanceOf[AttributeReference]) {
-              withInfo(attr, s"cannot resolve $attr among ${inputs.mkString(", ")}")
-              return None
-            }
-
-            val boundExpr = ExprOuterClass.BoundReference
-              .newBuilder()
-              .setIndex(boundRef.asInstanceOf[BoundReference].ordinal)
-              .setDatatype(dataType.get)
-              .build()
-
-            Some(
-              ExprOuterClass.Expr
-                .newBuilder()
-                .setBound(boundExpr)
-                .build())
-          } else {
-            val unboundRef = ExprOuterClass.UnboundReference
-              .newBuilder()
-              .setName(attr.name)
-              .setDatatype(dataType.get)
-              .build()
-
-            Some(
-              ExprOuterClass.Expr
-                .newBuilder()
-                .setUnbound(unboundRef)
-                .build())
-          }
-        } else {
-          withInfo(attr, s"unsupported datatype: ${attr.dataType}")
-          None
-        }
-
       // abs implementation is not correct
       // https://github.com/apache/datafusion-comet/issues/666
 //        case Abs(child, failOnErr) =>
@@ -1014,23 +888,6 @@ object QueryPlanSerde extends Logging with CometExprShim {
 //            withInfo(expr, child)
 //            None
 //          }
-
-      case Hex(child) =>
-        val childExpr = exprToProtoInternal(child, inputs, binding)
-        val optExpr =
-          scalarFunctionExprToProtoWithReturnType("hex", StringType, childExpr)
-
-        optExprWithInfo(optExpr, expr, child)
-
-      case e: Unhex =>
-        val unHex = unhexSerde(e)
-
-        val childExpr = exprToProtoInternal(unHex._1, inputs, binding)
-        val failOnErrorExpr = exprToProtoInternal(unHex._2, inputs, binding)
-
-        val optExpr =
-          scalarFunctionExprToProtoWithReturnType("unhex", e.dataType, childExpr, failOnErrorExpr)
-        optExprWithInfo(optExpr, expr, unHex._1)
 
       case RegExpReplace(subject, pattern, replacement, startPosition) =>
         if (!RegExp.isSupportedPattern(pattern.toString) &&
@@ -1077,10 +934,6 @@ object QueryPlanSerde extends Logging with CometExprShim {
           withInfo(expr, child)
           None
         }
-
-      case a @ Coalesce(_) =>
-        val exprChildren = a.children.map(exprToProtoInternal(_, inputs, binding))
-        scalarFunctionExprToProto("coalesce", exprChildren: _*)
 
       // With Spark 3.4, CharVarcharCodegenUtils.readSidePadding gets called to pad spaces for
       // char types.
@@ -1173,6 +1026,9 @@ object QueryPlanSerde extends Logging with CometExprShim {
         }
       case af @ ArrayFilter(_, func) if func.children.head.isInstanceOf[IsNotNull] =>
         convert(af, CometArrayCompact)
+      case l @ Length(child) if child.dataType == BinaryType =>
+        withInfo(l, "Length on BinaryType is not supported")
+        None
       case expr =>
         QueryPlanSerde.exprSerdeMap.get(expr.getClass) match {
           case Some(handler) =>
@@ -1838,6 +1694,23 @@ object QueryPlanSerde extends Logging with CometExprShim {
           scanBuilder.setSource(source)
         }
 
+        val ffiSafe = op match {
+          case _ if isExchangeSink(op) =>
+            // Source of broadcast exchange batches is ArrowStreamReader
+            // Source of shuffle exchange batches is NativeBatchDecoderIterator
+            true
+          case scan: CometScanExec if scan.scanImpl == CometConf.SCAN_NATIVE_COMET =>
+            // native_comet scan reuses mutable buffers
+            false
+          case scan: CometScanExec if scan.scanImpl == CometConf.SCAN_NATIVE_ICEBERG_COMPAT =>
+            // native_iceberg_compat scan reuses mutable buffers for constant columns
+            // https://github.com/apache/datafusion-comet/issues/2152
+            false
+          case _ =>
+            false
+        }
+        scanBuilder.setArrowFfiSafe(ffiSafe)
+
         val scanTypes = op.output.flatten { attr =>
           serializeDataType(attr.dataType)
         }
@@ -1889,6 +1762,9 @@ object QueryPlanSerde extends Logging with CometExprShim {
    * called.
    */
   private def isCometSink(op: SparkPlan): Boolean = {
+    if (isExchangeSink(op)) {
+      return true
+    }
     op match {
       case s if isCometScan(s) => true
       case _: CometSparkToColumnarExec => true
@@ -1896,15 +1772,21 @@ object QueryPlanSerde extends Logging with CometExprShim {
       case _: CoalesceExec => true
       case _: CollectLimitExec => true
       case _: UnionExec => true
+      case _: TakeOrderedAndProjectExec => true
+      case _: WindowExec => true
+      case _ => false
+    }
+  }
+
+  private def isExchangeSink(op: SparkPlan): Boolean = {
+    op match {
       case _: ShuffleExchangeExec => true
       case ShuffleQueryStageExec(_, _: CometShuffleExchangeExec, _) => true
       case ShuffleQueryStageExec(_, ReusedExchangeExec(_, _: CometShuffleExchangeExec), _) => true
-      case _: TakeOrderedAndProjectExec => true
       case BroadcastQueryStageExec(_, _: CometBroadcastExchangeExec, _) => true
       case BroadcastQueryStageExec(_, ReusedExchangeExec(_, _: CometBroadcastExchangeExec), _) =>
         true
       case _: BroadcastExchangeExec => true
-      case _: WindowExec => true
       case _ => false
     }
   }
@@ -1923,28 +1805,38 @@ object QueryPlanSerde extends Logging with CometExprShim {
 
   }
 
-  // TODO: Remove this constraint when we upgrade to new arrow-rs including
-  // https://github.com/apache/arrow-rs/pull/6225
+  // scalastyle:off
+  /**
+   * Align w/ Arrow's
+   * [[https://github.com/apache/arrow-rs/blob/55.2.0/arrow-ord/src/rank.rs#L30-L40 can_rank]] and
+   * [[https://github.com/apache/arrow-rs/blob/55.2.0/arrow-ord/src/sort.rs#L193-L215 can_sort_to_indices]]
+   *
+   * TODO: Include SparkSQL's [[YearMonthIntervalType]] and [[DayTimeIntervalType]]
+   */
+  // scalastyle:off
   def supportedSortType(op: SparkPlan, sortOrder: Seq[SortOrder]): Boolean = {
     def canRank(dt: DataType): Boolean = {
       dt match {
         case _: ByteType | _: ShortType | _: IntegerType | _: LongType | _: FloatType |
-            _: DoubleType | _: TimestampType | _: DecimalType | _: DateType =>
+            _: DoubleType | _: DecimalType =>
           true
-        case _: BinaryType | _: StringType => true
+        case _: DateType | _: TimestampType | _: TimestampNTZType =>
+          true
+        case _: BooleanType | _: BinaryType | _: StringType => true
         case _ => false
       }
     }
 
     if (sortOrder.length == 1) {
       val canSort = sortOrder.head.dataType match {
-        case _: BooleanType => true
         case _: ByteType | _: ShortType | _: IntegerType | _: LongType | _: FloatType |
-            _: DoubleType | _: TimestampType | _: TimestampNTZType | _: DecimalType |
-            _: DateType =>
+            _: DoubleType | _: DecimalType =>
           true
-        case _: BinaryType | _: StringType => true
+        case _: DateType | _: TimestampType | _: TimestampNTZType =>
+          true
+        case _: BooleanType | _: BinaryType | _: StringType => true
         case ArrayType(elementType, _) => canRank(elementType)
+        case MapType(_, valueType, _) => canRank(valueType)
         case _ => false
       }
       if (!canSort) {
@@ -2057,7 +1949,7 @@ case class Compatible(notes: Option[String] = None) extends SupportLevel
 case class Incompatible(notes: Option[String] = None) extends SupportLevel
 
 /** Comet does not support this feature */
-object Unsupported extends SupportLevel
+case class Unsupported(notes: Option[String] = None) extends SupportLevel
 
 /**
  * Trait for providing serialization logic for operators.
