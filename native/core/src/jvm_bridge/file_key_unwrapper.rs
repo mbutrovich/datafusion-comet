@@ -25,8 +25,8 @@ use jni::{
 /// A struct that holds all the JNI methods and fields for JVM FileKeyUnwrapper object.
 pub struct FileKeyUnwrapper<'a> {
     pub class: JClass<'a>,
-    pub method_create_instance: JStaticMethodID,
-    pub method_create_instance_ret: ReturnType,
+    pub method_get_instance: JStaticMethodID,
+    pub method_get_instance_ret: ReturnType,
     pub method_get_key: JMethodID,
     pub method_get_key_ret: ReturnType,
 }
@@ -38,12 +38,12 @@ impl<'a> FileKeyUnwrapper<'a> {
         let class = env.find_class(Self::JVM_CLASS)?;
 
         Ok(FileKeyUnwrapper {
-            method_create_instance: env.get_static_method_id(
+            method_get_instance: env.get_static_method_id(
                 Self::JVM_CLASS,
-                "createInstance",
+                "getInstance",
                 "(Ljava/lang/String;)Lorg/apache/comet/parquet/crypto/CometFileKeyUnwrapper;",
             )?,
-            method_create_instance_ret: ReturnType::Object,
+            method_get_instance_ret: ReturnType::Object,
             method_get_key: env.get_method_id(Self::JVM_CLASS, "getKey", "([B)[B")?,
             method_get_key_ret: ReturnType::Array,
             class,

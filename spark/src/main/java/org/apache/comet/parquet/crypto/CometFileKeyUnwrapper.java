@@ -34,8 +34,8 @@ public class CometFileKeyUnwrapper {
 
   private final FileKeyUnwrapper keyUnwrapper;
 
-  // Cache for Configuration instances - still needed for compatibility
-  private static final ConcurrentHashMap<String, Configuration> HADOOP_CONF_CACHE =
+  // Cache for CometFileKeyUnwrapper instances
+  private static final ConcurrentHashMap<String, CometFileKeyUnwrapper> INSTANCE_CACHE =
       new ConcurrentHashMap<>();
 
   /** Private constructor - use createInstance to create instances. */
@@ -52,33 +52,33 @@ public class CometFileKeyUnwrapper {
   }
 
   /**
-   * Preemptively stores the Hadoop Configuration for a given file path. This method should be
-   * called during plan creation when the correct hadoopConf is available.
+   * Creates and stores a CometFileKeyUnwrapper instance for the given file path. This method should
+   * be called during plan creation when both the filePath and hadoopConf are available.
    *
    * @param filePath The path to the Parquet file
    * @param hadoopConf The Hadoop Configuration to use for this file path
+   * @throws Exception if instance creation fails
    */
-  public static void storeHadoopConf(String filePath, Configuration hadoopConf) {
-    HADOOP_CONF_CACHE.put(filePath, hadoopConf);
+  public static void storeInstance(String filePath, Configuration hadoopConf) throws Exception {
+    CometFileKeyUnwrapper instance = new CometFileKeyUnwrapper(hadoopConf, filePath);
+    INSTANCE_CACHE.put(filePath, instance);
   }
 
   /**
-   * Creates a new CometFileKeyUnwrapper instance for the given file path. The Hadoop Configuration
-   * should have been previously stored via storeHadoopConf.
+   * Retrieves the cached CometFileKeyUnwrapper instance for the given file path. The instance
+   * should have been previously stored via storeInstance.
    *
    * @param filePath The path to the Parquet file
-   * @return A new CometFileKeyUnwrapper instance
-   * @throws Exception if instance creation fails
+   * @return The cached CometFileKeyUnwrapper instance
+   * @throws Exception if no instance is found for the given path
    */
-  public static CometFileKeyUnwrapper createInstance(String filePath) throws Exception {
-
-    // Get the cached Hadoop Configuration for this file path
-    Configuration hadoopConf = HADOOP_CONF_CACHE.get(filePath);
-    if (hadoopConf == null) {
-      throw new RuntimeException("Failed to retrieve stored hadoopConf for path: " + filePath);
+  public static CometFileKeyUnwrapper getInstance(String filePath) throws Exception {
+    CometFileKeyUnwrapper instance = INSTANCE_CACHE.get(filePath);
+    if (instance == null) {
+      throw new RuntimeException(
+          "Failed to retrieve stored CometFileKeyUnwrapper for path: " + filePath);
     }
-
-    return new CometFileKeyUnwrapper(hadoopConf, filePath);
+    return instance;
   }
 
   /**

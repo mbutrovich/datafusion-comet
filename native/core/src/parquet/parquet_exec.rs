@@ -204,18 +204,18 @@ impl CometKeyRetriever {
             ExecutionError::GeneralError(format!("Failed to create JString: {}", e))
         })?;
 
-        // Create FileKeyUnwrapper instance using constructor
+        // Get FileKeyUnwrapper instance from cache
         let file_key_unwrapper_obj = unsafe {
             env.call_static_method_unchecked(
                 &file_key_unwrapper_class.class,
-                file_key_unwrapper_class.method_create_instance,
-                file_key_unwrapper_class.method_create_instance_ret.clone(),
+                file_key_unwrapper_class.method_get_instance,
+                file_key_unwrapper_class.method_get_instance_ret.clone(),
                 &[jni::objects::JValue::from(&file_path_jstring).as_jni()],
             )
         }
         .map_err(|e| {
             ExecutionError::GeneralError(format!(
-                "Failed to create FileKeyUnwrapper instance: {}",
+                "Failed to get FileKeyUnwrapper instance: {}",
                 e
             ))
         })?
