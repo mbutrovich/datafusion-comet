@@ -33,25 +33,15 @@ import org.apache.parquet.crypto.ParquetCryptoRuntimeException;
  * complexity of getting the proper Hadoop Configuration from the current Spark context and creating
  * properly configured DecryptionKeyRetriever instances using DecryptionPropertiesFactory.
  */
-public class CometFileKeyUnwrapper implements DecryptionKeyRetriever {
+public class CometFileKeyUnwrapper {
 
-  private final DecryptionKeyRetriever keyRetriever;
-
-  // Cache for CometFileKeyUnwrapper instances
-  private static final ConcurrentHashMap<String, CometFileKeyUnwrapper> INSTANCE_CACHE =
+  // Cache for DecryptionKeyRetriever instances
+  private static final ConcurrentHashMap<String, DecryptionKeyRetriever> INSTANCE_CACHE =
       new ConcurrentHashMap<>();
 
-  /** Private constructor - use storeInstance to create instances. */
-  private CometFileKeyUnwrapper(
-      Configuration hadoopConf, String filePath, FileDecryptionProperties decryptionProperties)
-      throws Exception {
-    // Use the DecryptionKeyRetriever from the FileDecryptionProperties instead of reflection
-    this.keyRetriever = decryptionProperties.getKeyRetriever();
-  }
-
   /**
-   * Creates and stores a CometFileKeyUnwrapper instance for the given file path. This method should
-   * be called during plan creation when both the filePath and hadoopConf are available.
+   * Creates and stores a DecryptionKeyRetriever instance for the given file path. This method
+   * should be called during plan creation when both the filePath and hadoopConf are available.
    *
    * @param filePath The path to the Parquet file
    * @param hadoopConf The Hadoop Configuration to use for this file path
@@ -65,40 +55,27 @@ public class CometFileKeyUnwrapper implements DecryptionKeyRetriever {
     FileDecryptionProperties decryptionProperties =
         factory.getFileDecryptionProperties(hadoopConf, path);
 
-    CometFileKeyUnwrapper instance =
-        new CometFileKeyUnwrapper(hadoopConf, filePath, decryptionProperties);
-    INSTANCE_CACHE.put(filePath, instance);
+    DecryptionKeyRetriever keyRetriever = decryptionProperties.getKeyRetriever();
+    INSTANCE_CACHE.put(filePath, keyRetriever);
   }
 
   /**
-   * Retrieves the cached CometFileKeyUnwrapper instance for the given file path. The instance
-   * should have been previously stored via storeInstance.
+   * Gets the decryption key for the given key metadata using the cached DecryptionKeyRetriever for
+   * the specified file path.
    *
    * @param filePath The path to the Parquet file
-   * @return The cached CometFileKeyUnwrapper instance
-   * @throws Exception if no instance is found for the given path
-   */
-  public static CometFileKeyUnwrapper getInstance(String filePath) throws Exception {
-    CometFileKeyUnwrapper instance = INSTANCE_CACHE.get(filePath);
-    if (instance == null) {
-      throw new RuntimeException(
-          "Failed to retrieve stored CometFileKeyUnwrapper for path: " + filePath);
-    }
-    return instance;
-  }
-
-  /**
-   * Implementation of DecryptionKeyRetriever interface. Gets the decryption key for the given key
-   * metadata.
-   *
    * @param keyMetadata The key metadata bytes from the Parquet file
    * @return The decrypted key bytes
    * @throws ParquetCryptoRuntimeException if key unwrapping fails
    */
-  @Override
-  public byte[] getKey(byte[] keyMetadata) throws ParquetCryptoRuntimeException {
+  public static byte[] getKey(String filePath, byte[] keyMetadata)
+      throws ParquetCryptoRuntimeException {
     try {
-      // Delegate to the underlying DecryptionKeyRetriever from DecryptionProperties
+      DecryptionKeyRetriever keyRetriever = INSTANCE_CACHE.get(filePath);
+      if (keyRetriever == null) {
+        throw new RuntimeException(
+            "Failed to retrieve stored DecryptionKeyRetriever for path: " + filePath);
+      }
       return keyRetriever.getKey(keyMetadata);
     } catch (Exception e) {
       throw new ParquetCryptoRuntimeException("Failed to decrypt key", e);
