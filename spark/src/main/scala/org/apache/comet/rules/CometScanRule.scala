@@ -213,15 +213,30 @@ case class CometScanRule(session: SparkSession) extends Rule[SparkPlan] with Com
 //          return withInfos(scanExec, fallbackReasons.toSet)
 //        }
 
-        assert(
-          scanExec.inputRDD.sparkContext.hadoopConfiguration ==
-            scanExec.relation.sparkSession.sparkContext.hadoopConfiguration)
-
         if (encryptionEnabled) {
+          val hadoopConf = scanExec.relation.sparkSession.sparkContext.hadoopConfiguration
+
+          // Transfer crypto configurations from SQLConf to Hadoop Configuration
+          if (hadoopConf.get("parquet.crypto.factory.class") == null) {
+            Option(conf.getConfString("parquet.crypto.factory.class", null)).foreach {
+              factoryClass =>
+                hadoopConf.set("parquet.crypto.factory.class", factoryClass)
+            }
+          }
+          if (hadoopConf.get("parquet.encryption.kms.client.class") == null) {
+            Option(conf.getConfString("parquet.encryption.kms.client.class", null)).foreach {
+              kmsClientClass =>
+                hadoopConf.set("parquet.encryption.kms.client.class", kmsClientClass)
+            }
+          }
+          if (hadoopConf.get("parquet.encryption.key.list") == null) {
+            Option(conf.getConfString("parquet.encryption.key.list", null)).foreach { keyList =>
+              hadoopConf.set("parquet.encryption.key.list", keyList)
+            }
+          }
+
           scanExec.relation.inputFiles.foreach((filePath: String) => {
-            CometFileKeyUnwrapper.storeInstance(
-              filePath,
-              scanExec.relation.sparkSession.sparkContext.hadoopConfiguration)
+            CometFileKeyUnwrapper.storeInstance(filePath, hadoopConf)
           })
         }
 

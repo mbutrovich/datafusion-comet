@@ -23,32 +23,30 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.apache.parquet.crypto.keytools.FileKeyUnwrapper;
+import org.apache.parquet.crypto.DecryptionKeyRetriever;
+import org.apache.parquet.crypto.DecryptionPropertiesFactory;
+import org.apache.parquet.crypto.FileDecryptionProperties;
+import org.apache.parquet.crypto.ParquetCryptoRuntimeException;
 
 /**
- * Helper class to access FileKeyUnwrapper from native code via JNI. This class handles the
+ * Helper class to access DecryptionKeyRetriever from native code via JNI. This class handles the
  * complexity of getting the proper Hadoop Configuration from the current Spark context and creating
- * a properly configured FileKeyUnwrapper.
+ * properly configured DecryptionKeyRetriever instances using DecryptionPropertiesFactory.
  */
-public class CometFileKeyUnwrapper {
+public class CometFileKeyUnwrapper implements DecryptionKeyRetriever {
 
-  private final FileKeyUnwrapper keyUnwrapper;
+  private final DecryptionKeyRetriever keyRetriever;
 
   // Cache for CometFileKeyUnwrapper instances
   private static final ConcurrentHashMap<String, CometFileKeyUnwrapper> INSTANCE_CACHE =
       new ConcurrentHashMap<>();
 
-  /** Private constructor - use createInstance to create instances. */
-  private CometFileKeyUnwrapper(Configuration hadoopConf, String filePath) throws Exception {
-
-    // Try using reflection to access the package-private constructor
-    // Constructor signature: FileKeyUnwrapper(Configuration hadoopConfiguration, Path filePath)
-    java.lang.reflect.Constructor<FileKeyUnwrapper> constructor =
-        FileKeyUnwrapper.class.getDeclaredConstructor(Configuration.class, Path.class);
-    constructor.setAccessible(true);
-
-    Path path = new Path(filePath);
-    this.keyUnwrapper = constructor.newInstance(hadoopConf, path);
+  /** Private constructor - use storeInstance to create instances. */
+  private CometFileKeyUnwrapper(
+      Configuration hadoopConf, String filePath, FileDecryptionProperties decryptionProperties)
+      throws Exception {
+    // Use the DecryptionKeyRetriever from the FileDecryptionProperties instead of reflection
+    this.keyRetriever = decryptionProperties.getKeyRetriever();
   }
 
   /**
@@ -60,7 +58,15 @@ public class CometFileKeyUnwrapper {
    * @throws Exception if instance creation fails
    */
   public static void storeInstance(String filePath, Configuration hadoopConf) throws Exception {
-    CometFileKeyUnwrapper instance = new CometFileKeyUnwrapper(hadoopConf, filePath);
+    // Use DecryptionPropertiesFactory.loadFactory to get the factory and then call
+    // getFileDecryptionProperties
+    DecryptionPropertiesFactory factory = DecryptionPropertiesFactory.loadFactory(hadoopConf);
+    Path path = new Path(filePath);
+    FileDecryptionProperties decryptionProperties =
+        factory.getFileDecryptionProperties(hadoopConf, path);
+
+    CometFileKeyUnwrapper instance =
+        new CometFileKeyUnwrapper(hadoopConf, filePath, decryptionProperties);
     INSTANCE_CACHE.put(filePath, instance);
   }
 
@@ -82,14 +88,20 @@ public class CometFileKeyUnwrapper {
   }
 
   /**
-   * Gets the decryption key for the given key metadata.
+   * Implementation of DecryptionKeyRetriever interface. Gets the decryption key for the given key
+   * metadata.
    *
    * @param keyMetadata The key metadata bytes from the Parquet file
    * @return The decrypted key bytes
-   * @throws Exception if key unwrapping fails
+   * @throws ParquetCryptoRuntimeException if key unwrapping fails
    */
-  public byte[] getKey(byte[] keyMetadata) throws Exception {
-    // Call the getKey method to decrypt the key
-    return keyUnwrapper.getKey(keyMetadata);
+  @Override
+  public byte[] getKey(byte[] keyMetadata) throws ParquetCryptoRuntimeException {
+    try {
+      // Delegate to the underlying DecryptionKeyRetriever from DecryptionProperties
+      return keyRetriever.getKey(keyMetadata);
+    } catch (Exception e) {
+      throw new ParquetCryptoRuntimeException("Failed to decrypt key", e);
+    }
   }
 }
