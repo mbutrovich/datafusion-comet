@@ -153,7 +153,7 @@ class ParquetEncryptionITCase extends CometTestBase with SQLTestUtils {
           CometConf.COMET_ENABLED.key -> "true",
           CometConf.COMET_EXEC_ENABLED.key -> "true",
           SQLConf.ANSI_ENABLED.key -> "false",
-          CometConf.COMET_NATIVE_SCAN_IMPL.key -> SCAN_NATIVE_DATAFUSION) {
+          CometConf.COMET_NATIVE_SCAN_IMPL.key -> SCAN_NATIVE_ICEBERG_COMPAT) {
           testFun
         }
       }

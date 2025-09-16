@@ -260,6 +260,7 @@ case class CometScanExec(
   }
 
   protected override def doExecuteColumnar(): RDD[ColumnarBatch] = {
+    println("HELLO WORLD!")
     val numOutputRows = longMetric("numOutputRows")
     val scanTime = longMetric("scanTime")
     inputRDD.asInstanceOf[RDD[ColumnarBatch]].mapPartitionsInternal { batches =>
