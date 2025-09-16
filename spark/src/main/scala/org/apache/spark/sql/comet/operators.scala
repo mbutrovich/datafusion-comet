@@ -200,10 +200,15 @@ abstract class CometNativeExec extends CometExec {
         val serializedPlanCopy = serializedPlan
         // TODO: support native metrics for all operators.
         val leaves: Seq[SparkPlan] = this.collectLeaves()
-        val cometNativeScans: Seq[CometNativeScanExec] = leaves.filter(_.isInstanceOf[CometNativeScanExec]).map(_.asInstanceOf[CometNativeScanExec])
-        val cometScans = leaves.filter(_.isInstanceOf[CometScanExec]).map(_.asInstanceOf[CometScanExec])
+        val cometNativeScans: Seq[CometNativeScanExec] = leaves
+          .filter(_.isInstanceOf[CometNativeScanExec])
+          .map(_.asInstanceOf[CometNativeScanExec])
+        val cometScans =
+          leaves.filter(_.isInstanceOf[CometScanExec]).map(_.asInstanceOf[CometScanExec])
+        // scalastyle:off
         println(cometNativeScans)
         println(cometScans)
+        // scalastyle:on
         val nativeMetrics = CometMetricNode.fromCometPlan(this)
 
         def createCometExecIter(
