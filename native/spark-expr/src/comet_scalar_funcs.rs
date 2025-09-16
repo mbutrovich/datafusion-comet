@@ -199,7 +199,6 @@ struct CometScalarFunction {
 
 impl PartialEq for CometScalarFunction {
     fn eq(&self, other: &Self) -> bool {
-        // Compare by name, signature, and data_type only (functions can't be compared)
         self.name == other.name
             && self.signature == other.signature
             && self.data_type == other.data_type
@@ -213,7 +212,6 @@ impl std::hash::Hash for CometScalarFunction {
         self.name.hash(state);
         self.signature.hash(state);
         self.data_type.hash(state);
-        // We can't hash the function, so skip it
     }
 }
 
