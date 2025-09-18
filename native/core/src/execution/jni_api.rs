@@ -58,7 +58,7 @@ use jni::{
 };
 use jni::{
     objects::GlobalRef,
-    sys::{jboolean, jdouble, jintArray, jobjectArray, jstring},
+    sys::{jboolean, jdouble, jintArray, jobject, jobjectArray, jstring},
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -141,6 +141,9 @@ struct ExecutionContext {
     pub memory_pool_config: MemoryPoolConfig,
     /// Whether to log memory usage on each call to execute_plan
     pub tracing_enabled: bool,
+    /// Optional key unwrapper for encrypted Parquet files
+    #[allow(dead_code)] // Will be used when implementing encrypted file support
+    pub key_unwrapper: Option<Arc<GlobalRef>>,
 }
 
 /// Accept serialized query plan and return the address of the native query plan.
@@ -168,6 +171,7 @@ pub unsafe extern "system" fn Java_org_apache_comet_Native_createPlan(
     debug_native: jboolean,
     explain_native: jboolean,
     tracing_enabled: jboolean,
+    key_unwrapper_obj: JObject,
 ) -> jlong {
     try_unwrap_or_throw(&e, |mut env| {
         with_trace("createPlan", tracing_enabled != JNI_FALSE, || {
@@ -240,6 +244,22 @@ pub unsafe extern "system" fn Java_org_apache_comet_Native_createPlan(
                 None
             };
 
+            // Handle key unwrapper for encrypted files
+            let key_unwrapper = if !key_unwrapper_obj.is_null() {
+                // Create GlobalRef from the JObject
+                Some(Arc::new(jni_new_global_ref!(env, key_unwrapper_obj)?))
+            } else {
+                None
+            };
+
+            // Register encryption factory with key unwrapper if available
+            if let Some(key_unwrapper) = &key_unwrapper {
+                let encryption_factory = CometEncryptionFactory::new(Some(key_unwrapper.clone()));
+                session
+                    .runtime_env()
+                    .register_parquet_encryption_factory(ENCRYPTION_FACTORY_ID, Arc::new(encryption_factory));
+            }
+
             let exec_context = Box::new(ExecutionContext {
                 id,
                 task_attempt_id,
@@ -258,6 +278,7 @@ pub unsafe extern "system" fn Java_org_apache_comet_Native_createPlan(
                 explain_native: explain_native == 1,
                 memory_pool_config,
                 tracing_enabled: tracing_enabled != JNI_FALSE,
+                key_unwrapper,
             });
 
             Ok(Box::into_raw(exec_context) as i64)

@@ -20,10 +20,8 @@
 package org.apache.spark.sql.comet
 
 import java.io.ByteArrayOutputStream
-
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -42,11 +40,11 @@ import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.io.ChunkedByteBuffer
-
 import com.google.common.base.Objects
-
+import org.apache.comet.parquet.CometParquetFileFormat
 import org.apache.comet.{CometConf, CometExecIterator, CometRuntimeException}
 import org.apache.comet.serde.OperatorOuterClass.Operator
+import org.apache.spark.util.SerializableConfiguration
 
 /**
  * A Comet physical operator
@@ -114,7 +112,8 @@ object CometExec {
       nativePlan,
       CometMetricNode(Map.empty),
       numParts,
-      partitionIdx)
+      partitionIdx,
+      encryptedFilePaths = Seq.empty)
   }
 
   def getCometIterator(
@@ -123,7 +122,8 @@ object CometExec {
       nativePlan: Operator,
       nativeMetrics: CometMetricNode,
       numParts: Int,
-      partitionIdx: Int): CometExecIterator = {
+      partitionIdx: Int,
+      encryptedFilePaths: Seq[(String, org.apache.spark.broadcast.Broadcast[org.apache.spark.util.SerializableConfiguration])] = Seq.empty): CometExecIterator = {
     val outputStream = new ByteArrayOutputStream()
     nativePlan.writeTo(outputStream)
     outputStream.close()
@@ -135,7 +135,8 @@ object CometExec {
       bytes,
       nativeMetrics,
       numParts,
-      partitionIdx)
+      partitionIdx,
+      encryptedFilePaths)
   }
 
   /**
@@ -211,6 +212,66 @@ abstract class CometNativeExec extends CometExec {
         // scalastyle:on
         val nativeMetrics = CometMetricNode.fromCometPlan(this)
 
+
+
+        // TODO: Fix this to be conditional
+        val encryptedFilePaths = cometNativeScans.flatMap { scan =>
+          val hadoopConf = scan.relation.sparkSession.sparkContext.hadoopConfiguration
+//          import scala.jdk.CollectionConverters._
+//          val configMap: Map[String, String] = hadoopConf.asScala.map(entry => entry.getKey -> entry.getValue).toMap
+//          println(configMap)
+          val sqlConf = scan.relation.sparkSession.sessionState.conf
+
+          // Extract encryption-related properties from both Hadoop and SQL configurations
+//          val encryptionProps = Map(
+//            "parquet.encryption.kms.client.class" -> Option(
+//              hadoopConf.get("parquet.encryption.kms.client.class"))
+//              .orElse(sqlConf.getConfString("parquet.encryption.kms.client.class", null) match {
+//                case null => None
+//                case value => Some(value)
+//              }),
+//            "parquet.encryption.key.retriever.class" -> Option(
+//              hadoopConf.get("parquet.encryption.key.retriever.class"))
+//              .orElse(
+//                sqlConf.getConfString("parquet.encryption.key.retriever.class", null) match {
+//                  case null => None
+//                  case value => Some(value)
+//                }),
+//            "parquet.crypto.factory.class" -> Option(
+//              hadoopConf.get("parquet.crypto.factory.class"))
+//              .orElse(sqlConf.getConfString("parquet.crypto.factory.class", null) match {
+//                case null => None
+//                case value => Some(value)
+//              })).collect { case (k, Some(v)) => k -> v }
+
+          // Transfer crypto configurations from SQLConf to Hadoop Configuration
+          if (hadoopConf.get("parquet.crypto.factory.class") == null) {
+            Option(conf.getConfString("parquet.crypto.factory.class", null)).foreach {
+              factoryClass =>
+                hadoopConf.set("parquet.crypto.factory.class", factoryClass)
+            }
+          }
+          if (hadoopConf.get("parquet.encryption.kms.client.class") == null) {
+            Option(conf.getConfString("parquet.encryption.kms.client.class", null)).foreach {
+              kmsClientClass =>
+                hadoopConf.set("parquet.encryption.kms.client.class", kmsClientClass)
+            }
+          }
+          if (hadoopConf.get("parquet.encryption.key.list") == null) {
+            Option(conf.getConfString("parquet.encryption.key.list", null)).foreach { keyList =>
+              hadoopConf.set("parquet.encryption.key.list", keyList)
+            }
+          }
+          val broadcastedConf =
+            scan.relation.sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+
+          scan.relation.inputFiles.map { filePath => (filePath, broadcastedConf) }
+        }
+
+        // scalastyle:off
+        println(s"encryptedFilePaths $encryptedFilePaths")
+        // scalastyle:on
+
         def createCometExecIter(
             inputs: Seq[Iterator[ColumnarBatch]],
             numParts: Int,
@@ -222,7 +283,8 @@ abstract class CometNativeExec extends CometExec {
             serializedPlanCopy,
             nativeMetrics,
             numParts,
-            partitionIndex)
+            partitionIndex,
+            encryptedFilePaths)
 
           setSubqueries(it.id, this)
 

@@ -17,7 +17,7 @@
 
 use jni::{
     errors::Result as JniResult,
-    objects::{JClass, JStaticMethodID},
+    objects::{JClass, JMethodID, JObject},
     signature::ReturnType,
     JNIEnv,
 };
@@ -25,24 +25,26 @@ use jni::{
 /// A struct that holds all the JNI methods and fields for JVM FileKeyUnwrapper object.
 pub struct FileKeyUnwrapper<'a> {
     pub class: JClass<'a>,
-    pub method_get_key: JStaticMethodID,
+    pub instance: JObject<'a>,
+    pub method_get_key: JMethodID,
     pub method_get_key_ret: ReturnType,
 }
 
 impl<'a> FileKeyUnwrapper<'a> {
-    pub const JVM_CLASS: &'static str = "org/apache/comet/parquet/crypto/CometFileKeyUnwrapper";
+    pub const JVM_CLASS: &'static str = "org/apache/comet/parquet/CometFileKeyUnwrapper";
 
-    pub fn new(env: &mut JNIEnv<'a>) -> JniResult<FileKeyUnwrapper<'a>> {
+    pub fn new(env: &mut JNIEnv<'a>, instance: JObject<'a>) -> JniResult<FileKeyUnwrapper<'a>> {
         let class = env.find_class(Self::JVM_CLASS)?;
 
         Ok(FileKeyUnwrapper {
-            method_get_key: env.get_static_method_id(
+            method_get_key: env.get_method_id(
                 Self::JVM_CLASS,
                 "getKey",
                 "(Ljava/lang/String;[B)[B",
             )?,
             method_get_key_ret: ReturnType::Array,
             class,
+            instance,
         })
     }
 }

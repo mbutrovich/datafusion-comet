@@ -16,13 +16,15 @@
 // under the License.
 
 use crate::execution::operators::ExecutionError;
-use crate::jvm_bridge::JVMClasses;
+use crate::jvm_bridge::{file_key_unwrapper::FileKeyUnwrapper, JVMClasses};
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkSchemaAdapterFactory;
 use arrow::datatypes::{Field, SchemaRef};
 use async_trait::async_trait;
 use datafusion::common::extensions_options;
 use datafusion::config::{EncryptionFactoryOptions, TableParquetOptions};
+use jni::objects::{GlobalRef, JObject};
+use std::sync::Arc;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{
     FileGroup, FileScanConfigBuilder, FileSource, ParquetSource,
@@ -41,7 +43,6 @@ use object_store::path::Path;
 use parquet::encryption::decrypt::{FileDecryptionProperties, KeyRetriever};
 use parquet::encryption::encrypt::FileEncryptionProperties;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Initializes a DataSourceExec plan with a ParquetSource. This may be used by either the
 /// `native_datafusion` scan or the `native_iceberg_compat` scan.
@@ -144,11 +145,25 @@ pub const ENCRYPTION_FACTORY_ID: &str = "comet.jni_kms_encryption";
 // Options used to configure our example encryption factory
 extensions_options! {
     struct CometEncryptionConfig {
-        pub url_base: String, default = "file:///".into()
+        url_base: String, default = "file:///".into()
     }
 }
-#[derive(Default, Debug)]
-pub struct CometEncryptionFactory {}
+#[derive(Debug)]
+pub struct CometEncryptionFactory {
+    key_unwrapper: Option<Arc<GlobalRef>>,
+}
+
+impl CometEncryptionFactory {
+    pub fn new(key_unwrapper: Option<Arc<GlobalRef>>) -> Self {
+        Self { key_unwrapper }
+    }
+}
+
+impl Default for CometEncryptionFactory {
+    fn default() -> Self {
+        Self { key_unwrapper: None }
+    }
+}
 
 /// `EncryptionFactory` is a DataFusion trait for types that generate
 /// file encryption and decryption properties.
@@ -176,23 +191,32 @@ impl EncryptionFactory for CometEncryptionFactory {
         file_path: &Path,
     ) -> Result<Option<FileDecryptionProperties>, DataFusionError> {
         let config: CometEncryptionConfig = options.to_extension_options()?;
-        let full_path: String = config.url_base + file_path.as_ref();
-        let key_retriever = CometKeyRetriever::new(&full_path)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        let decryption_properties =
-            FileDecryptionProperties::with_key_retriever(Arc::new(key_retriever)).build()?;
-        Ok(Some(decryption_properties))
+
+        // Only create decryption properties if we have a key unwrapper
+        if let Some(key_unwrapper) = &self.key_unwrapper {
+            let full_path: String = config.url_base + file_path.as_ref();
+            let key_retriever = CometKeyRetriever::new(&full_path, key_unwrapper.clone())
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            let decryption_properties =
+                FileDecryptionProperties::with_key_retriever(Arc::new(key_retriever)).build()?;
+            Ok(Some(decryption_properties))
+        } else {
+            // No key unwrapper available, no encrypted files to handle
+            Ok(None)
+        }
     }
 }
 
 struct CometKeyRetriever {
     file_path: String,
+    key_unwrapper: Arc<GlobalRef>,
 }
 
 impl CometKeyRetriever {
-    fn new(file_path: &str) -> Result<Self, ExecutionError> {
+    fn new(file_path: &str, key_unwrapper: Arc<GlobalRef>) -> Result<Self, ExecutionError> {
         Ok(CometKeyRetriever {
             file_path: file_path.to_string(),
+            key_unwrapper,
         })
     }
 }
@@ -201,7 +225,16 @@ impl KeyRetriever for CometKeyRetriever {
     /// Get a data encryption key using the metadata stored in the Parquet file.
     fn retrieve_key(&self, key_metadata: &[u8]) -> datafusion::parquet::errors::Result<Vec<u8>> {
         // Get JNI environment
-        let mut env = JVMClasses::get_env().unwrap();
+        let mut env = JVMClasses::get_env()
+            .map_err(|e| datafusion::parquet::errors::ParquetError::General(e.to_string()))?;
+
+        // Get the key unwrapper instance from GlobalRef
+        let unwrapper_instance = self.key_unwrapper.as_obj();
+
+        // Create FileKeyUnwrapper with the instance - we need to clone the JObject
+        let file_key_unwrapper = unsafe {
+            FileKeyUnwrapper::new(&mut env, JObject::from_raw(unwrapper_instance.as_raw()))
+        }.map_err(|e| datafusion::parquet::errors::ParquetError::General(e.to_string()))?;
 
         // Convert file path to JString
         let file_path_jstring = env.new_string(&self.file_path).unwrap();
@@ -209,16 +242,12 @@ impl KeyRetriever for CometKeyRetriever {
         // Convert key_metadata to JByteArray
         let key_metadata_array = env.byte_array_from_slice(key_metadata).unwrap();
 
-        // Get the FileKeyUnwrapper class and method
-        let jvm_classes = JVMClasses::get();
-        let file_key_unwrapper_class = &jvm_classes.file_key_unwrapper;
-
-        // Call static method FileKeyUnwrapper.getKey(String, byte[]) -> byte[]
+        // Call instance method FileKeyUnwrapper.getKey(String, byte[]) -> byte[]
         let result = unsafe {
-            env.call_static_method_unchecked(
-                &file_key_unwrapper_class.class,
-                file_key_unwrapper_class.method_get_key,
-                file_key_unwrapper_class.method_get_key_ret.clone(),
+            env.call_method_unchecked(
+                &file_key_unwrapper.instance,
+                file_key_unwrapper.method_get_key,
+                file_key_unwrapper.method_get_key_ret.clone(),
                 &[
                     jni::objects::JValue::from(&file_path_jstring).as_jni(),
                     jni::objects::JValue::from(&key_metadata_array).as_jni(),

@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package org.apache.comet.parquet.crypto;
+package org.apache.comet.parquet;
 
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,7 +36,7 @@ import org.apache.parquet.crypto.ParquetCryptoRuntimeException;
 public class CometFileKeyUnwrapper {
 
   // Cache for DecryptionKeyRetriever instances
-  private static final ConcurrentHashMap<String, DecryptionKeyRetriever> INSTANCE_CACHE =
+  private final ConcurrentHashMap<String, DecryptionKeyRetriever> INSTANCE_CACHE =
       new ConcurrentHashMap<>();
 
   /**
@@ -47,11 +47,14 @@ public class CometFileKeyUnwrapper {
    * @param hadoopConf The Hadoop Configuration to use for this file path
    * @throws Exception if instance creation fails
    */
-  public static void storeInstance(String filePath, Configuration hadoopConf) throws Exception {
+  public void storeInstance(String filePath, Configuration hadoopConf) throws Exception {
     // Use DecryptionPropertiesFactory.loadFactory to get the factory and then call
     // getFileDecryptionProperties
     DecryptionPropertiesFactory factory = DecryptionPropertiesFactory.loadFactory(hadoopConf);
     Path path = new Path(filePath);
+    // scalastyle:off
+    System.out.println("creating keyretriever for " + filePath);
+    // scalastyle:on
     FileDecryptionProperties decryptionProperties =
         factory.getFileDecryptionProperties(hadoopConf, path);
 
@@ -68,8 +71,7 @@ public class CometFileKeyUnwrapper {
    * @return The decrypted key bytes
    * @throws ParquetCryptoRuntimeException if key unwrapping fails
    */
-  public static byte[] getKey(String filePath, byte[] keyMetadata)
-      throws ParquetCryptoRuntimeException {
+  public byte[] getKey(String filePath, byte[] keyMetadata) throws ParquetCryptoRuntimeException {
     try {
       DecryptionKeyRetriever keyRetriever = INSTANCE_CACHE.get(filePath);
       if (keyRetriever == null) {
