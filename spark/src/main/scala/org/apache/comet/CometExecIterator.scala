@@ -67,7 +67,10 @@ class CometExecIterator(
     nativeMetrics: CometMetricNode,
     numParts: Int,
     partitionIndex: Int,
-    encryptedFilePaths: Seq[(String, org.apache.spark.broadcast.Broadcast[org.apache.spark.util.SerializableConfiguration])] = Seq.empty)
+    encryptedFilePaths: Seq[(
+        String,
+        org.apache.spark.broadcast.Broadcast[org.apache.spark.util.SerializableConfiguration])] =
+      Seq.empty)
     extends Iterator[ColumnarBatch]
     with Logging {
 

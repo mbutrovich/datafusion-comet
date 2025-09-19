@@ -20,8 +20,10 @@
 package org.apache.spark.sql.comet
 
 import java.io.ByteArrayOutputStream
+
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -39,12 +41,14 @@ import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.util.io.ChunkedByteBuffer
-import com.google.common.base.Objects
-import org.apache.comet.parquet.CometParquetFileFormat
-import org.apache.comet.{CometConf, CometExecIterator, CometRuntimeException}
-import org.apache.comet.serde.OperatorOuterClass.Operator
 import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.util.io.ChunkedByteBuffer
+
+import com.google.common.base.Objects
+
+import org.apache.comet.{CometConf, CometExecIterator, CometRuntimeException}
+import org.apache.comet.parquet.CometParquetFileFormat
+import org.apache.comet.serde.OperatorOuterClass.Operator
 
 /**
  * A Comet physical operator
@@ -123,7 +127,10 @@ object CometExec {
       nativeMetrics: CometMetricNode,
       numParts: Int,
       partitionIdx: Int,
-      encryptedFilePaths: Seq[(String, org.apache.spark.broadcast.Broadcast[org.apache.spark.util.SerializableConfiguration])] = Seq.empty): CometExecIterator = {
+      encryptedFilePaths: Seq[(
+          String,
+          org.apache.spark.broadcast.Broadcast[
+            org.apache.spark.util.SerializableConfiguration])] = Seq.empty): CometExecIterator = {
     val outputStream = new ByteArrayOutputStream()
     nativePlan.writeTo(outputStream)
     outputStream.close()
@@ -212,13 +219,12 @@ abstract class CometNativeExec extends CometExec {
         // scalastyle:on
         val nativeMetrics = CometMetricNode.fromCometPlan(this)
 
-
-
         // TODO: Fix this to be conditional
         val encryptedFilePaths = cometNativeScans.flatMap { scan =>
           val hadoopConf = scan.relation.sparkSession.sparkContext.hadoopConfiguration
 //          import scala.jdk.CollectionConverters._
-//          val configMap: Map[String, String] = hadoopConf.asScala.map(entry => entry.getKey -> entry.getValue).toMap
+//          val configMap: Map[String, String] = hadoopConf.asScala.map(entry => entry.getKey ->
+//          entry.getValue).toMap
 //          println(configMap)
           val sqlConf = scan.relation.sparkSession.sessionState.conf
 
@@ -263,7 +269,8 @@ abstract class CometNativeExec extends CometExec {
             }
           }
           val broadcastedConf =
-            scan.relation.sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+            scan.relation.sparkSession.sparkContext
+              .broadcast(new SerializableConfiguration(hadoopConf))
 
           scan.relation.inputFiles.map { filePath => (filePath, broadcastedConf) }
         }

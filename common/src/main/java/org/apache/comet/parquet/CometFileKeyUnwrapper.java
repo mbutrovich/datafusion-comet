@@ -35,8 +35,14 @@ import org.apache.parquet.crypto.ParquetCryptoRuntimeException;
  */
 public class CometFileKeyUnwrapper {
 
-  // Cache for DecryptionKeyRetriever instances
-  private final ConcurrentHashMap<String, DecryptionKeyRetriever> INSTANCE_CACHE =
+  // Each file path gets a unique DecryptionKeyRetriever
+  private final ConcurrentHashMap<String, DecryptionKeyRetriever> retrieverCache =
+      new ConcurrentHashMap<>();
+
+  // Each hadoopConf yields a unique DecryptionPropertiesFactory. While it's unlikely that
+  // this plan contains more than one hadoopConf, we don't want to assume that. So we'll
+  // provide the ability to cache more than one Factory with a map.
+  private final ConcurrentHashMap<Configuration, DecryptionPropertiesFactory> factoryCache =
       new ConcurrentHashMap<>();
 
   /**
@@ -47,10 +53,17 @@ public class CometFileKeyUnwrapper {
    * @param hadoopConf The Hadoop Configuration to use for this file path
    * @throws Exception if instance creation fails
    */
-  public void storeInstance(String filePath, Configuration hadoopConf) throws Exception {
+  public void storeInstance(final String filePath, final Configuration hadoopConf) {
     // Use DecryptionPropertiesFactory.loadFactory to get the factory and then call
     // getFileDecryptionProperties
-    DecryptionPropertiesFactory factory = DecryptionPropertiesFactory.loadFactory(hadoopConf);
+    DecryptionPropertiesFactory factory = factoryCache.get(hadoopConf);
+    if (factory == null) {
+      System.out.println("CACHE MISS");
+      factory = DecryptionPropertiesFactory.loadFactory(hadoopConf);
+      factoryCache.put(hadoopConf, factory);
+    } else {
+      System.out.println("CACHE HIT");
+    }
     Path path = new Path(filePath);
     // scalastyle:off
     System.out.println("creating keyretriever for " + filePath);
@@ -59,7 +72,7 @@ public class CometFileKeyUnwrapper {
         factory.getFileDecryptionProperties(hadoopConf, path);
 
     DecryptionKeyRetriever keyRetriever = decryptionProperties.getKeyRetriever();
-    INSTANCE_CACHE.put(filePath, keyRetriever);
+    retrieverCache.put(filePath, keyRetriever);
   }
 
   /**
@@ -71,16 +84,13 @@ public class CometFileKeyUnwrapper {
    * @return The decrypted key bytes
    * @throws ParquetCryptoRuntimeException if key unwrapping fails
    */
-  public byte[] getKey(String filePath, byte[] keyMetadata) throws ParquetCryptoRuntimeException {
-    try {
-      DecryptionKeyRetriever keyRetriever = INSTANCE_CACHE.get(filePath);
-      if (keyRetriever == null) {
-        throw new RuntimeException(
-            "Failed to retrieve stored DecryptionKeyRetriever for path: " + filePath);
-      }
-      return keyRetriever.getKey(keyMetadata);
-    } catch (Exception e) {
-      throw new ParquetCryptoRuntimeException("Failed to decrypt key", e);
+  public byte[] getKey(final String filePath, final byte[] keyMetadata)
+      throws ParquetCryptoRuntimeException {
+    DecryptionKeyRetriever keyRetriever = retrieverCache.get(filePath);
+    if (keyRetriever == null) {
+      throw new ParquetCryptoRuntimeException(
+          "Failed to retrieve stored DecryptionKeyRetriever for path: " + filePath);
     }
+    return keyRetriever.getKey(keyMetadata);
   }
 }
