@@ -32,6 +32,7 @@ import org.apache.spark.sql.vectorized._
 
 import org.apache.comet.CometConf.{COMET_BATCH_SIZE, COMET_DEBUG_ENABLED, COMET_EXEC_MEMORY_POOL_TYPE, COMET_EXPLAIN_NATIVE_ENABLED, COMET_METRICS_UPDATE_INTERVAL}
 import org.apache.comet.Tracing.withTrace
+import org.apache.comet.serde.Config.ConfigMap
 import org.apache.comet.vector.NativeUtil
 
 /**
@@ -84,10 +85,27 @@ class CometExecIterator(
       // and `memory_fraction` below.
       CometSparkSessionExtensions.getCometMemoryOverhead(conf)
     }
+
+    // serialize Spark conf in protobuf format
+    val builder = ConfigMap.newBuilder()
+    conf.getAll.foreach { case (k, v) =>
+      builder.putEntries(k, v)
+    }
+    val protobufSparkConfigs = builder.build().toByteArray
+
+    val memoryLimitPerTask = if (offHeapMode) {
+      // this per-task limit is not used in native code when using unified memory
+      // so we can skip calculating it and avoid logging irrelevant information
+      0
+    } else {
+      getMemoryLimitPerTask(conf)
+    }
+
     nativeLib.createPlan(
       id,
       cometBatchIterators,
       protobufQueryPlan,
+      protobufSparkConfigs,
       numParts,
       nativeMetrics,
       metricsUpdateInterval = COMET_METRICS_UPDATE_INTERVAL.get(),
@@ -97,7 +115,7 @@ class CometExecIterator(
       offHeapMode,
       memoryPoolType = COMET_EXEC_MEMORY_POOL_TYPE.get(),
       memoryLimit,
-      memoryLimitPerTask = getMemoryLimitPerTask(conf),
+      memoryLimitPerTask,
       taskAttemptId = TaskContext.get().taskAttemptId,
       debug = COMET_DEBUG_ENABLED.get(),
       explain = COMET_EXPLAIN_NATIVE_ENABLED.get(),

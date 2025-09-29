@@ -102,6 +102,7 @@ jobs:
           - name: "fuzz"
             value: |
               org.apache.comet.CometFuzzTestSuite
+              org.apache.comet.CometFuzzAggregateSuite
               org.apache.comet.DataGeneratorSuite
           - name: "shuffle"
             value: |
@@ -117,6 +118,7 @@ jobs:
             value: |
               org.apache.comet.parquet.ParquetReadV1Suite
               org.apache.comet.parquet.ParquetReadV2Suite
+              org.apache.comet.parquet.ParquetReadFromFakeHadoopFsSuite
               org.apache.spark.sql.comet.ParquetDatetimeRebaseV1Suite
               org.apache.spark.sql.comet.ParquetDatetimeRebaseV2Suite
               org.apache.spark.sql.comet.ParquetEncryptionITCase
@@ -146,6 +148,10 @@ jobs:
               org.apache.spark.sql.comet.CometTaskMetricsSuite
               org.apache.comet.CometBitwiseExpressionSuite
               org.apache.comet.CometMapExpressionSuite
+              org.apache.comet.objectstore.NativeConfigSuite
+          - name: "sql"
+            value: |
+              org.apache.spark.sql.CometToPrettyStringSuite
       fail-fast: false
     name: ${{ matrix.os }}/${{ matrix.profile.name }} [${{ matrix.suite.name }}]
     runs-on: ${{ matrix.os }}
@@ -165,7 +171,7 @@ jobs:
         uses: ./.github/actions/java-test
         with:
           artifact_name: ${{ matrix.os }}-${{ matrix.profile.name }}-${{ matrix.suite.name }}-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
-          suites: ${{ matrix.suite.value }}
+          suites: ${{ matrix.suite.name == 'sql' && matrix.profile.name == 'Spark 3.4, JDK 11, Scala 2.12' && '' || matrix.suite.value }}
           maven_opts: ${{ matrix.profile.maven_opts }}
           scan_impl: ${{ matrix.profile.scan_impl }}
           upload-test-reports: true

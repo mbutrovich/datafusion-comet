@@ -16,16 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+package org.apache.comet.shims
 
-package org.apache.spark.sql.comet
+import org.apache.spark.sql.types.DataType
 
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.execution.datasources._
-import org.apache.spark.sql.sources._
-
-object DataSourceHelpers {
-  def getPushedDownFilters(relation: BaseRelation, dataFilters: Seq[Expression]): Seq[Filter] = {
-    val supportNestedPredicatePushdown = DataSourceUtils.supportNestedPredicatePushdown(relation)
-    dataFilters.flatMap(DataSourceStrategy.translateFilter(_, supportNestedPredicatePushdown))
-  }
+trait CometTypeShim {
+    def isStringCollationType(dt: DataType): Boolean = false
 }

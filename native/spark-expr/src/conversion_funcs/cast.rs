@@ -15,13 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::timezone;
 use crate::utils::array_with_timezone;
+use crate::{timezone, BinaryOutputStyle};
 use crate::{EvalMode, SparkError, SparkResult};
 use arrow::array::builder::StringBuilder;
-use arrow::array::{DictionaryArray, StringArray, StructArray};
+use arrow::array::{DictionaryArray, GenericByteArray, StringArray, StructArray};
 use arrow::compute::can_cast_types;
-use arrow::datatypes::{DataType, Schema};
+use arrow::datatypes::{
+    ArrowDictionaryKeyType, ArrowNativeType, DataType, GenericBinaryType, Schema,
+};
 use arrow::{
     array::{
         cast::AsArray,
@@ -41,7 +43,8 @@ use arrow::{
 };
 use chrono::{DateTime, NaiveDate, TimeZone, Timelike};
 use datafusion::common::{
-    cast::as_generic_string_array, internal_err, Result as DataFusionResult, ScalarValue,
+    cast::as_generic_string_array, internal_err, DataFusionError, Result as DataFusionResult,
+    ScalarValue,
 };
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::ColumnarValue;
@@ -58,6 +61,8 @@ use std::{
     num::Wrapping,
     sync::Arc,
 };
+
+use base64::prelude::*;
 
 static TIMESTAMP_FORMAT: Option<&str> = Some("%Y-%m-%d %H:%M:%S%.f");
 
@@ -243,7 +248,7 @@ fn can_cast_from_string(to_type: &DataType, options: &SparkCastOptions) -> bool 
     }
 }
 
-fn can_cast_to_string(from_type: &DataType, options: &SparkCastOptions) -> bool {
+fn can_cast_to_string(from_type: &DataType, _options: &SparkCastOptions) -> bool {
     use DataType::*;
     match from_type {
         Boolean | Int8 | Int16 | Int32 | Int64 | Date32 | Date64 | Timestamp(_, _) => true,
@@ -259,14 +264,10 @@ fn can_cast_to_string(from_type: &DataType, options: &SparkCastOptions) -> bool 
             // scientific notation where Comet does not
             true
         }
-        Binary => {
-            // https://github.com/apache/datafusion-comet/issues/377
-            // Only works for binary data representing valid UTF-8 strings
-            options.allow_incompat
-        }
+        Binary => true,
         Struct(fields) => fields
             .iter()
-            .all(|f| can_cast_to_string(f.data_type(), options)),
+            .all(|f| can_cast_to_string(f.data_type(), _options)),
         _ => false,
     }
 }
@@ -815,6 +816,8 @@ pub struct SparkCastOptions {
     pub is_adapting_schema: bool,
     /// String to use to represent null values
     pub null_string: String,
+    /// SparkSQL's binaryOutputStyle
+    pub binary_output_style: Option<BinaryOutputStyle>,
 }
 
 impl SparkCastOptions {
@@ -826,6 +829,7 @@ impl SparkCastOptions {
             allow_cast_unsigned_ints: false,
             is_adapting_schema: false,
             null_string: "null".to_string(),
+            binary_output_style: None,
         }
     }
 
@@ -837,6 +841,7 @@ impl SparkCastOptions {
             allow_cast_unsigned_ints: false,
             is_adapting_schema: false,
             null_string: "null".to_string(),
+            binary_output_style: None,
         }
     }
 }
@@ -865,6 +870,40 @@ pub fn spark_cast(
             Ok(ColumnarValue::Scalar(scalar))
         }
     }
+}
+
+// copied from datafusion common scalar/mod.rs
+fn dict_from_values<K: ArrowDictionaryKeyType>(
+    values_array: ArrayRef,
+) -> datafusion::common::Result<ArrayRef> {
+    // Create a key array with `size` elements of 0..array_len for all
+    // non-null value elements
+    let key_array: PrimitiveArray<K> = (0..values_array.len())
+        .map(|index| {
+            if values_array.is_valid(index) {
+                let native_index = K::Native::from_usize(index).ok_or_else(|| {
+                    DataFusionError::Internal(format!(
+                        "Can not create index of type {} from value {}",
+                        K::DATA_TYPE,
+                        index
+                    ))
+                })?;
+                Ok(Some(native_index))
+            } else {
+                Ok(None)
+            }
+        })
+        .collect::<datafusion::common::Result<Vec<_>>>()?
+        .into_iter()
+        .collect();
+
+    // create a new DictionaryArray
+    //
+    // Note: this path could be made faster by using the ArrayData
+    // APIs and skipping validation, if it every comes up in
+    // performance traces.
+    let dict_array = DictionaryArray::<K>::try_new(key_array, values_array)?;
+    Ok(Arc::new(dict_array))
 }
 
 fn cast_array(
@@ -896,18 +935,33 @@ fn cast_array(
                 .downcast_ref::<DictionaryArray<Int32Type>>()
                 .expect("Expected a dictionary array");
 
-            let casted_dictionary = DictionaryArray::<Int32Type>::new(
-                dict_array.keys().clone(),
-                cast_array(Arc::clone(dict_array.values()), to_type, cast_options)?,
-            );
-
             let casted_result = match to_type {
-                Dictionary(_, _) => Arc::new(casted_dictionary.clone()),
-                _ => take(casted_dictionary.values().as_ref(), dict_array.keys(), None)?,
+                Dictionary(_, to_value_type) => {
+                    let casted_dictionary = DictionaryArray::<Int32Type>::new(
+                        dict_array.keys().clone(),
+                        cast_array(Arc::clone(dict_array.values()), to_value_type, cast_options)?,
+                    );
+                    Arc::new(casted_dictionary.clone())
+                }
+                _ => {
+                    let casted_dictionary = DictionaryArray::<Int32Type>::new(
+                        dict_array.keys().clone(),
+                        cast_array(Arc::clone(dict_array.values()), to_type, cast_options)?,
+                    );
+                    take(casted_dictionary.values().as_ref(), dict_array.keys(), None)?
+                }
             };
             return Ok(spark_cast_postprocess(casted_result, &from_type, to_type));
         }
-        _ => array,
+        _ => {
+            if let Dictionary(_, _) = to_type {
+                let dict_array = dict_from_values::<Int32Type>(array)?;
+                let casted_result = cast_array(dict_array, to_type, cast_options)?;
+                return Ok(spark_cast_postprocess(casted_result, &from_type, to_type));
+            } else {
+                array
+            }
+        }
     };
     let from_type = array.data_type();
     let eval_mode = cast_options.eval_mode;
@@ -977,6 +1031,7 @@ fn cast_array(
         {
             Ok(cast_with_options(&array, to_type, &CAST_OPTIONS)?)
         }
+        (Binary, Utf8) => Ok(cast_binary_to_string::<i32>(&array, cast_options)?),
         _ if cast_options.is_adapting_schema
             || is_datafusion_spark_compatible(from_type, to_type, cast_options.allow_incompat) =>
         {
@@ -993,6 +1048,74 @@ fn cast_array(
         }
     };
     Ok(spark_cast_postprocess(cast_result?, from_type, to_type))
+}
+
+fn cast_binary_to_string<O: OffsetSizeTrait>(
+    array: &dyn Array,
+    spark_cast_options: &SparkCastOptions,
+) -> Result<ArrayRef, ArrowError> {
+    let input = array
+        .as_any()
+        .downcast_ref::<GenericByteArray<GenericBinaryType<O>>>()
+        .unwrap();
+
+    fn binary_formatter(value: &[u8], spark_cast_options: &SparkCastOptions) -> String {
+        match spark_cast_options.binary_output_style {
+            Some(s) => spark_binary_formatter(value, s),
+            None => cast_binary_formatter(value),
+        }
+    }
+
+    let output_array = input
+        .iter()
+        .map(|value| match value {
+            Some(value) => Ok(Some(binary_formatter(value, spark_cast_options))),
+            _ => Ok(None),
+        })
+        .collect::<Result<GenericStringArray<O>, ArrowError>>()?;
+    Ok(Arc::new(output_array))
+}
+
+/// This function mimics the [BinaryFormatter]: https://github.com/apache/spark/blob/v4.0.0/sql/catalyst/src/main/scala/org/apache/spark/sql/catalyst/expressions/ToStringBase.scala#L449-L468
+/// used by SparkSQL's ToPrettyString expression.
+/// The BinaryFormatter was [introduced]: https://issues.apache.org/jira/browse/SPARK-47911 in Spark 4.0.0
+/// Before Spark 4.0.0, the default is SPACE_DELIMITED_UPPERCASE_HEX
+fn spark_binary_formatter(value: &[u8], binary_output_style: BinaryOutputStyle) -> String {
+    match binary_output_style {
+        BinaryOutputStyle::Utf8 => String::from_utf8(value.to_vec()).unwrap(),
+        BinaryOutputStyle::Basic => {
+            format!(
+                "{:?}",
+                value
+                    .iter()
+                    .map(|v| i8::from_ne_bytes([*v]))
+                    .collect::<Vec<i8>>()
+            )
+        }
+        BinaryOutputStyle::Base64 => BASE64_STANDARD_NO_PAD.encode(value),
+        BinaryOutputStyle::Hex => value
+            .iter()
+            .map(|v| hex::encode_upper([*v]))
+            .collect::<String>(),
+        BinaryOutputStyle::HexDiscrete => {
+            // Spark's default SPACE_DELIMITED_UPPERCASE_HEX
+            format!(
+                "[{}]",
+                value
+                    .iter()
+                    .map(|v| hex::encode_upper([*v]))
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            )
+        }
+    }
+}
+
+fn cast_binary_formatter(value: &[u8]) -> String {
+    match String::from_utf8(value.to_vec()) {
+        Ok(value) => value,
+        Err(_) => unsafe { String::from_utf8_unchecked(value.to_vec()) },
+    }
 }
 
 /// Determines if DataFusion supports the given cast in a way that is

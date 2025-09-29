@@ -201,6 +201,114 @@ class CometExecSuite extends CometTestBase {
     }
   }
 
+  test("Sort on array of boolean") {
+    withSQLConf(
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "true",
+      SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false",
+      CometConf.COMET_EXEC_ENABLED.key -> "true",
+      CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
+      CometConf.COMET_SHUFFLE_MODE.key -> "jvm") {
+
+      sql("""
+          |CREATE OR REPLACE TEMPORARY VIEW test_list AS SELECT * FROM VALUES
+          | (array(true)),
+          | (array(false)),
+          | (array(false)),
+          | (array(false)) AS test(arr)
+          |""".stripMargin)
+
+      val df = sql("""
+          SELECT * FROM test_list ORDER BY arr
+          |""".stripMargin)
+      val sort = stripAQEPlan(df.queryExecution.executedPlan).collect { case s: CometSortExec =>
+        s
+      }.headOption
+      assert(sort.isDefined)
+    }
+  }
+
+  test("Sort on TimestampNTZType") {
+    withSQLConf(
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "true",
+      SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false",
+      CometConf.COMET_EXEC_ENABLED.key -> "true",
+      CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
+      CometConf.COMET_SHUFFLE_MODE.key -> "jvm") {
+
+      sql("""
+          |CREATE OR REPLACE TEMPORARY VIEW test_list AS SELECT * FROM VALUES
+          | (TIMESTAMP_NTZ'2025-08-29 00:00:00'),
+          | (TIMESTAMP_NTZ'2023-07-07 00:00:00'),
+          | (convert_timezone('Asia/Kathmandu', 'UTC', TIMESTAMP_NTZ'2023-07-07 00:00:00')),
+          | (convert_timezone('America/Los_Angeles', 'UTC', TIMESTAMP_NTZ'2023-07-07 00:00:00')),
+          | (TIMESTAMP_NTZ'1969-12-31 00:00:00') AS test(ts_ntz)
+          |""".stripMargin)
+
+      val df = sql("""
+          SELECT * FROM test_list ORDER BY ts_ntz
+          |""".stripMargin)
+      checkSparkAnswer(df)
+      val sort = stripAQEPlan(df.queryExecution.executedPlan).collect { case s: CometSortExec =>
+        s
+      }.headOption
+      assert(sort.isDefined)
+    }
+  }
+
+  test("Sort on map w/ TimestampNTZType values") {
+    withSQLConf(
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "true",
+      SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false",
+      CometConf.COMET_EXEC_ENABLED.key -> "true",
+      CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
+      CometConf.COMET_SHUFFLE_MODE.key -> "jvm") {
+
+      sql("""
+          |CREATE OR REPLACE TEMPORARY VIEW test_map AS SELECT * FROM VALUES
+          | (map('a', TIMESTAMP_NTZ'2025-08-29 00:00:00')),
+          | (map('b', TIMESTAMP_NTZ'2023-07-07 00:00:00')),
+          | (map('c', convert_timezone('Asia/Kathmandu', 'UTC', TIMESTAMP_NTZ'2023-07-07 00:00:00'))),
+          | (map('d', convert_timezone('America/Los_Angeles', 'UTC', TIMESTAMP_NTZ'2023-07-07 00:00:00'))) AS test(map)
+          |""".stripMargin)
+
+      val df = sql("""
+          SELECT * FROM test_map ORDER BY map_values(map) DESC
+          |""".stripMargin)
+      checkSparkAnswer(df)
+      val sort = stripAQEPlan(df.queryExecution.executedPlan).collect { case s: CometSortExec =>
+        s
+      }.headOption
+      assert(sort.isDefined)
+    }
+  }
+
+  test("Sort on map w/ boolean values") {
+    withSQLConf(
+      SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "true",
+      SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false",
+      CometConf.COMET_EXEC_ENABLED.key -> "true",
+      CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
+      CometConf.COMET_EXEC_SORT_ENABLED.key -> "true",
+      CometConf.COMET_SHUFFLE_MODE.key -> "jvm") {
+
+      sql("""
+          |CREATE OR REPLACE TEMPORARY VIEW test_map AS SELECT * FROM VALUES
+          | (map('a', true)),
+          | (map('b', true)),
+          | (map('c', false)),
+          | (map('d', true)) AS test(map)
+          |""".stripMargin)
+
+      val df = sql("""
+          SELECT * FROM test_map ORDER BY map_values(map) DESC
+          |""".stripMargin)
+      val sort = stripAQEPlan(df.queryExecution.executedPlan).collect { case s: CometSortExec =>
+        s
+      }.headOption
+      assert(sort.isDefined)
+    }
+  }
+
   test(
     "fall back to Spark when the partition spec and order spec are not the same for window function") {
     withTempView("test") {
@@ -504,7 +612,7 @@ class CometExecSuite extends CometTestBase {
       withSQLConf(
         CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
         CometConf.COMET_SHUFFLE_MODE.key -> "jvm",
-        CometConf.COMET_CAST_ALLOW_INCOMPATIBLE.key -> "true") {
+        CometConf.COMET_EXPR_ALLOW_INCOMPATIBLE.key -> "true") {
         withParquetTable((0 until 5).map(i => (i, i + 1)), "tbl") {
           var column1 = s"CAST(max(_1) AS $subqueryType)"
           if (subqueryType == "BINARY") {
@@ -923,9 +1031,8 @@ class CometExecSuite extends CometTestBase {
           |GROUP BY key
               """.stripMargin)
 
-      // The above query uses COUNT(DISTINCT) which Comet doesn't support yet, so the plan will
-      // have a mix of `HashAggregate` and `CometHashAggregate`. In the following we check all
-      // operators starting from `CometHashAggregate` are native.
+      // The above query uses SUM(DISTINCT) and count(distinct value1, value2)
+      // which is not yet supported
       checkSparkAnswer(df)
       val subPlan = stripAQEPlan(df.queryExecution.executedPlan).collectFirst {
         case s: CometHashAggregateExec => s
@@ -1431,7 +1538,7 @@ class CometExecSuite extends CometTestBase {
   test("SPARK-33474: Support typed literals as partition spec values") {
     withSQLConf(
       SESSION_LOCAL_TIMEZONE.key -> "Asia/Kathmandu",
-      CometConf.COMET_CAST_ALLOW_INCOMPATIBLE.key -> "true") {
+      CometConf.COMET_EXPR_ALLOW_INCOMPATIBLE.key -> "true") {
       withTable("t1") {
         val binaryStr = "Spark SQL"
         val binaryHexStr = Hex.hex(UTF8String.fromString(binaryStr).getBytes).toString
@@ -2104,6 +2211,48 @@ class CometExecSuite extends CometTestBase {
       }
       assert(nodeNames.length == 1)
       assert(nodeNames.head == "CometSparkRowToColumnar")
+    }
+  }
+
+  test("ReusedExchange broadcast with incompatible partitions number does not fail") {
+    withTable("tbl1", "tbl2", "tbl3") {
+      // enforce different number of partitions for future broadcasts/exchanges
+      spark
+        .range(50)
+        .withColumnRenamed("id", "x")
+        .repartition(2)
+        .writeTo("tbl1")
+        .using("parquet")
+        .create()
+      spark
+        .range(50)
+        .withColumnRenamed("id", "y")
+        .repartition(3)
+        .writeTo("tbl2")
+        .using("parquet")
+        .create()
+      spark
+        .range(50)
+        .withColumnRenamed("id", "z")
+        .repartition(4)
+        .writeTo("tbl3")
+        .using("parquet")
+        .create()
+      val df1 = spark.table("tbl1")
+      val df2 = spark.table("tbl2")
+      val df3 = spark.table("tbl3")
+      Seq("true", "false").foreach(aqeEnabled =>
+        withSQLConf(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> aqeEnabled) {
+          val dfWithReusedExchange = df1
+            .join(df3.hint("broadcast").join(df1, $"x" === $"z"), "x", "right")
+            .join(
+              df3
+                .hint("broadcast")
+                .join(df2, $"y" === $"z", "right")
+                .withColumnRenamed("z", "z1"),
+              $"x" === $"y")
+          checkSparkAnswerAndOperator(dfWithReusedExchange, classOf[ReusedExchangeExec])
+        })
     }
   }
 
