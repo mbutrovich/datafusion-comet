@@ -21,8 +21,8 @@ package org.apache.comet.serde
 
 import java.util.Locale
 
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Expression, InitCap, Like, Literal, Lower, RLike, StringRepeat, StringRPad, Substring, Upper}
-import org.apache.spark.sql.types.{DataTypes, LongType, StringType}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Expression, InitCap, Length, Like, Literal, Lower, RegExpReplace, RLike, StringLPad, StringRepeat, StringRPad, Substring, Upper}
+import org.apache.spark.sql.types.{BinaryType, DataTypes, LongType, StringType}
 
 import org.apache.comet.CometConf
 import org.apache.comet.CometSparkSessionExtensions.withInfo
@@ -65,6 +65,13 @@ class CometCaseConversionBase[T <: Expression](function: String)
 object CometUpper extends CometCaseConversionBase[Upper]("upper")
 
 object CometLower extends CometCaseConversionBase[Lower]("lower")
+
+object CometLength extends CometScalarFunction[Length]("length") {
+  override def getSupportLevel(expr: Length): SupportLevel = expr.child.dataType match {
+    case _: BinaryType => Unsupported(Some("Length on BinaryType is not supported"))
+    case _ => Compatible()
+  }
+}
 
 object CometInitCap extends CometScalarFunction[InitCap]("initcap") {
 
@@ -168,6 +175,73 @@ object CometStringRPad extends CometExpressionSerde[StringRPad] {
   }
 }
 
+object CometStringLPad extends CometExpressionSerde[StringLPad] {
+
+  /**
+   * Convert a Spark expression into a protocol buffer representation that can be passed into
+   * native code.
+   *
+   * @param expr
+   *   The Spark expression.
+   * @param inputs
+   *   The input attributes.
+   * @param binding
+   *   Whether the attributes are bound (this is only relevant in aggregate expressions).
+   * @return
+   *   Protocol buffer representation, or None if the expression could not be converted. In this
+   *   case it is expected that the input expression will have been tagged with reasons why it
+   *   could not be converted.
+   */
+  override def convert(
+      expr: StringLPad,
+      inputs: Seq[Attribute],
+      binding: Boolean): Option[Expr] = {
+    scalarFunctionExprToProto(
+      "lpad",
+      exprToProtoInternal(expr.str, inputs, binding),
+      exprToProtoInternal(expr.len, inputs, binding),
+      exprToProtoInternal(expr.pad, inputs, binding))
+  }
+}
+
+object CometRegExpReplace extends CometExpressionSerde[RegExpReplace] {
+  override def getSupportLevel(expr: RegExpReplace): SupportLevel = {
+    if (!RegExp.isSupportedPattern(expr.regexp.toString) &&
+      !CometConf.COMET_REGEXP_ALLOW_INCOMPATIBLE.get()) {
+      withInfo(
+        expr,
+        s"Regexp pattern ${expr.regexp} is not compatible with Spark. " +
+          s"Set ${CometConf.COMET_REGEXP_ALLOW_INCOMPATIBLE.key}=true " +
+          "to allow it anyway.")
+      return Incompatible()
+    }
+    expr.pos match {
+      case Literal(value, DataTypes.IntegerType) if value == 1 => Compatible()
+      case _ =>
+        Unsupported(Some("Comet only supports regexp_replace with an offset of 1 (no offset)."))
+    }
+  }
+
+  override def convert(
+      expr: RegExpReplace,
+      inputs: Seq[Attribute],
+      binding: Boolean): Option[Expr] = {
+    val subjectExpr = exprToProtoInternal(expr.subject, inputs, binding)
+    val patternExpr = exprToProtoInternal(expr.regexp, inputs, binding)
+    val replacementExpr = exprToProtoInternal(expr.rep, inputs, binding)
+    // DataFusion's regexp_replace stops at the first match. We need to add the 'g' flag
+    // to apply the regex globally to match Spark behavior.
+    val flagsExpr = exprToProtoInternal(Literal("g"), inputs, binding)
+    val optExpr = scalarFunctionExprToProto(
+      "regexp_replace",
+      subjectExpr,
+      patternExpr,
+      replacementExpr,
+      flagsExpr)
+    optExprWithInfo(optExpr, expr, expr.subject, expr.regexp, expr.rep, expr.pos)
+  }
+}
+
 trait CommonStringExprs {
 
   def stringDecode(
@@ -182,12 +256,13 @@ trait CommonStringExprs {
         // decode(col, 'utf-8') can be treated as a cast with "try" eval mode that puts nulls
         // for invalid strings.
         // Left child is the binary expression.
-        CometCast.castToProto(
-          expr,
-          None,
-          DataTypes.StringType,
-          exprToProtoInternal(bin, inputs, binding).get,
-          CometEvalMode.TRY)
+        val binExpr = exprToProtoInternal(bin, inputs, binding)
+        if (binExpr.isDefined) {
+          CometCast.castToProto(expr, None, DataTypes.StringType, binExpr.get, CometEvalMode.TRY)
+        } else {
+          withInfo(expr, bin)
+          None
+        }
       case _ =>
         withInfo(expr, "Comet only supports decoding with 'utf-8'.")
         None

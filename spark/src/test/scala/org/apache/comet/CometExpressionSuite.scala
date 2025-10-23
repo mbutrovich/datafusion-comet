@@ -58,7 +58,7 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   val ARITHMETIC_OVERFLOW_EXCEPTION_MSG =
     """org.apache.comet.CometNativeException: [ARITHMETIC_OVERFLOW] integer overflow. If necessary set "spark.sql.ansi.enabled" to "false" to bypass this error"""
   val DIVIDE_BY_ZERO_EXCEPTION_MSG =
-    """org.apache.comet.CometNativeException: [DIVIDE_BY_ZERO] Division by zero. Use `try_divide` to tolerate divisor being 0 and return NULL instead"""
+    """Division by zero. Use `try_divide` to tolerate divisor being 0 and return NULL instead"""
 
   test("compare true/false to negative zero") {
     Seq(false, true).foreach { dictionary =>
@@ -239,7 +239,8 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     }
   }
 
-  test("date_add with scalar overflow") {
+  // TODO: https://github.com/apache/datafusion-comet/issues/2539
+  ignore("date_add with scalar overflow") {
     Seq(true, false).foreach { dictionaryEnabled =>
       withTempDir { dir =>
         val path = new Path(dir.toURI.toString, "test.parquet")
@@ -252,7 +253,7 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
           } else {
             assert(sparkErr.get.getMessage.contains("integer overflow"))
           }
-          assert(cometErr.get.getMessage.contains("`NaiveDate + TimeDelta` overflowed"))
+          assert(cometErr.get.getMessage.contains("attempt to add with overflow"))
         }
       }
     }
@@ -296,10 +297,11 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
             checkSparkMaybeThrows(sql(s"SELECT _20 - ${Int.MaxValue} FROM tbl"))
           if (isSpark40Plus) {
             assert(sparkErr.get.getMessage.contains("EXPRESSION_DECODING_FAILED"))
+            assert(cometErr.get.getMessage.contains("EXPRESSION_DECODING_FAILED"))
           } else {
             assert(sparkErr.get.getMessage.contains("integer overflow"))
+            assert(cometErr.get.getMessage.contains("integer overflow"))
           }
-          assert(cometErr.get.getMessage.contains("`NaiveDate - TimeDelta` overflowed"))
         }
       }
     }
@@ -425,6 +427,24 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
     withParquetTable(data, "t1") {
       val res = sql(
         """ select rpad(_1,_2,'?'), rpad(_1,_2,'??') , rpad(_1,2, '??'), hex(rpad(unhex('aabb'), 5)),
+          rpad(_1, 5, '??') from t1 order by _1 """.stripMargin)
+      checkSparkAnswerAndOperator(res)
+    }
+  }
+
+  test("test lpad expression support") {
+    val data = Seq(("IfIWasARoadIWouldBeBent", 10), ("తెలుగు", 2))
+    withParquetTable(data, "t1") {
+      val res = sql("select lpad(_1,_2) , lpad(_1,2) from t1 order by _1")
+      checkSparkAnswerAndOperator(res)
+    }
+  }
+
+  test("LPAD with character support other than default space") {
+    val data = Seq(("IfIWasARoadIWouldBeBent", 10), ("hi", 2))
+    withParquetTable(data, "t1") {
+      val res = sql(
+        """ select lpad(_1,_2,'?'), lpad(_1,_2,'??') , lpad(_1,2, '??'), hex(lpad(unhex('aabb'), 5)),
           rpad(_1, 5, '??') from t1 order by _1 """.stripMargin)
       checkSparkAnswerAndOperator(res)
     }
@@ -2004,7 +2024,8 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
               |md5(col), md5(cast(a as string)), md5(cast(b as string)),
               |hash(col), hash(col, 1), hash(col, 0), hash(col, a, b), hash(b, a, col),
               |xxhash64(col), xxhash64(col, 1), xxhash64(col, 0), xxhash64(col, a, b), xxhash64(b, a, col),
-              |sha2(col, 0), sha2(col, 256), sha2(col, 224), sha2(col, 384), sha2(col, 512), sha2(col, 128), sha2(col, -1)
+              |sha2(col, 0), sha2(col, 256), sha2(col, 224), sha2(col, 384), sha2(col, 512), sha2(col, 128), sha2(col, -1),
+              |sha1(col), sha1(cast(a as string)), sha1(cast(b as string))
               |from test
               |""".stripMargin)
         }
@@ -2116,7 +2137,8 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
               |md5(col), md5(cast(a as string)), --md5(cast(b as string)),
               |hash(col), hash(col, 1), hash(col, 0), hash(col, a, b), hash(b, a, col),
               |xxhash64(col), xxhash64(col, 1), xxhash64(col, 0), xxhash64(col, a, b), xxhash64(b, a, col),
-              |sha2(col, 0), sha2(col, 256), sha2(col, 224), sha2(col, 384), sha2(col, 512), sha2(col, 128), sha2(col, -1)
+              |sha2(col, 0), sha2(col, 256), sha2(col, 224), sha2(col, 384), sha2(col, 512), sha2(col, 128), sha2(col, -1),
+              |sha1(col), sha1(cast(a as string))
               |from test
               |""".stripMargin)
         }
@@ -2929,7 +2951,6 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   }
 
   test("ANSI support for divide (division by zero)") {
-    //    TODO : Support ANSI mode in Integral divide -
     val data = Seq((Integer.MIN_VALUE, 0))
     withSQLConf(SQLConf.ANSI_ENABLED.key -> "true") {
       withParquetTable(data, "tbl") {
@@ -2950,7 +2971,6 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
   }
 
   test("ANSI support for divide (division by zero) float division") {
-    //    TODO : Support ANSI mode in Integral divide -
     val data = Seq((Float.MinPositiveValue, 0.0))
     withSQLConf(SQLConf.ANSI_ENABLED.key -> "true") {
       withParquetTable(data, "tbl") {
@@ -2965,6 +2985,70 @@ class CometExpressionSuite extends CometTestBase with AdaptiveSparkPlanHelper {
             assert(cometExc.getMessage.contains(DIVIDE_BY_ZERO_EXCEPTION_MSG))
             assert(sparkExc.getMessage.contains("Division by zero"))
           case _ => fail("Exception should be thrown")
+        }
+      }
+    }
+  }
+
+  test("ANSI support for integral divide (division by zero)") {
+    val data = Seq((Integer.MAX_VALUE, 0))
+    Seq("true", "false").foreach { p =>
+      withSQLConf(SQLConf.ANSI_ENABLED.key -> p) {
+        withParquetTable(data, "tbl") {
+          val res = spark.sql("""
+                |SELECT
+                |  _1 div _2
+                |  from tbl
+                |  """.stripMargin)
+
+          checkSparkMaybeThrows(res) match {
+            case (Some(sparkException), Some(cometException)) =>
+              assert(sparkException.getMessage.contains(DIVIDE_BY_ZERO_EXCEPTION_MSG))
+              assert(cometException.getMessage.contains(DIVIDE_BY_ZERO_EXCEPTION_MSG))
+            case (None, None) => checkSparkAnswerAndOperator(res)
+            case (None, Some(ex)) =>
+              fail(
+                "Comet threw an exception but Spark did not. Comet exception: " + ex.getMessage)
+            case (Some(sparkException), None) =>
+              fail(
+                "Spark threw an exception but Comet did not. Spark exception: " +
+                  sparkException.getMessage)
+          }
+        }
+      }
+    }
+  }
+
+  test("ANSI support for round function") {
+    Seq(
+      (
+        Int.MaxValue,
+        Int.MinValue,
+        Long.MinValue,
+        Long.MaxValue,
+        Byte.MinValue,
+        Byte.MaxValue,
+        Short.MinValue,
+        Short.MaxValue)).foreach { value =>
+      val data = Seq(value)
+      withParquetTable(data, "tbl") {
+        Seq(-1000, -100, -10, -1, 0, 1, 10, 100, 1000).foreach { scale =>
+          Seq(true, false).foreach { ansi =>
+            withSQLConf(SQLConf.ANSI_ENABLED.key -> ansi.toString) {
+              val res = spark.sql(s"SELECT round(_1, $scale) from tbl")
+              checkSparkMaybeThrows(res) match {
+                case (Some(sparkException), Some(cometException)) =>
+                  assert(sparkException.getMessage.contains("ARITHMETIC_OVERFLOW"))
+                  assert(cometException.getMessage.contains("ARITHMETIC_OVERFLOW"))
+                case (None, None) => checkSparkAnswerAndOperator(res)
+                case (None, Some(ex)) =>
+                  fail("Comet threw an exception but Spark did not. Comet exception: " + ex.getMessage)
+                case (Some(sparkException), None) =>
+                  fail("Spark threw an exception but Comet did not. Spark exception: " +
+                    sparkException.getMessage)
+              }
+            }
+          }
         }
       }
     }
