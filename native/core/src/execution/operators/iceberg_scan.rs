@@ -243,13 +243,13 @@ impl IcebergFileStream {
             .with_row_selection_enabled(true)
             .build();
 
-        let parallel_stream = reader.read(task_stream).map_err(|e| {
+        let arrow_reader_stream = reader.read(task_stream).map_err(|e| {
             DataFusionError::Execution(format!("Failed to read Iceberg tasks: {}", e))
         })?;
 
         let target_schema = Arc::clone(&schema);
 
-        let adapted_stream = parallel_stream
+        let adapted_stream = arrow_reader_stream
             .map_err(|e| DataFusionError::Execution(format!("Iceberg scan error: {}", e)))
             .and_then(move |batch| {
                 let spark_options = SparkParquetOptions::new(EvalMode::Legacy, "UTC", false);
