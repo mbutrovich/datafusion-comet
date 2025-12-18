@@ -1,4 +1,4 @@
- TakeOrderedAndProject [COMET: ]
+TakeOrderedAndProject
 +- HashAggregate
    +- CometColumnarToRow
       +- CometColumnarExchange
@@ -10,7 +10,7 @@
                   :     :- Project
                   :     :  +- Filter
                   :     :     +- BroadcastHashJoin
-                  :     :        :- BroadcastHashJoin
+                  :     :        :-  BroadcastHashJoin [COMET: Unsupported join type ExistenceJoin(exists#1)]
                   :     :        :  :- CometColumnarToRow
                   :     :        :  :  +- CometBroadcastHashJoin
                   :     :        :  :     :- CometFilter

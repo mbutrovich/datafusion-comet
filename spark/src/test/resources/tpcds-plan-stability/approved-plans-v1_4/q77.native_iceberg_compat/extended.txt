@@ -1,4 +1,4 @@
- TakeOrderedAndProject [COMET: ]
+TakeOrderedAndProject
 +- HashAggregate
    +- CometColumnarToRow
       +- CometColumnarExchange
@@ -49,7 +49,7 @@
                   :                             +- CometFilter
                   :                                +- CometScan [native_iceberg_compat] parquet spark_catalog.default.store
                   :- Project
-                  :  +- BroadcastNestedLoopJoin
+                  :  +-  BroadcastNestedLoopJoin [COMET: BroadcastNestedLoopJoin is not supported]
                   :     :- BroadcastExchange
                   :     :  +- CometColumnarToRow
                   :     :     +- CometHashAggregate

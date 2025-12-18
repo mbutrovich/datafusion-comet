@@ -48,6 +48,9 @@ message Operator {
     HashJoin hash_join = 109;
     Window window = 110;
     NativeScan native_scan = 111;
+    IcebergScan iceberg_scan = 112;
+    ParquetWriter parquet_writer = 113;
+    Explode explode = 114;
   }
 }
 
@@ -107,6 +110,85 @@ message NativeScan {
   bool encryption_enabled = 14;
 }
 
+message IcebergScan {
+  // Schema to read
+  repeated SparkStructField required_schema = 1;
+
+  // Catalog-specific configuration for FileIO (credentials, S3/GCS config, etc.)
+  map<string, string> catalog_properties = 2;
+
+  // Pre-planned file scan tasks grouped by Spark partition
+  repeated IcebergFilePartition file_partitions = 3;
+
+  // Table metadata file path for FileIO initialization
+  string metadata_location = 4;
+
+  // Deduplication pools - shared data referenced by index from tasks
+  repeated string schema_pool = 5;
+  repeated string partition_type_pool = 6;
+  repeated string partition_spec_pool = 7;
+  repeated string name_mapping_pool = 8;
+  repeated ProjectFieldIdList project_field_ids_pool = 9;
+  repeated string partition_data_pool = 10;
+  repeated DeleteFileList delete_files_pool = 11;
+  repeated spark.spark_expression.Expr residual_pool = 12;
+}
+
+// Helper message for deduplicating field ID lists
+message ProjectFieldIdList {
+  repeated int32 field_ids = 1;
+}
+
+// Helper message for deduplicating delete file lists
+message DeleteFileList {
+  repeated IcebergDeleteFile delete_files = 1;
+}
+
+// Groups FileScanTasks for a single Spark partition
+message IcebergFilePartition {
+  repeated IcebergFileScanTask file_scan_tasks = 1;
+}
+
+// Iceberg FileScanTask containing data file, delete files, and residual filter
+message IcebergFileScanTask {
+  // Data file path (e.g., s3://bucket/warehouse/db/table/data/00000-0-abc.parquet)
+  string data_file_path = 1;
+
+  // Byte range to read (for split files)
+  uint64 start = 2;
+  uint64 length = 3;
+
+  // Record count if reading entire file
+  optional uint64 record_count = 4;
+
+  // Indices into IcebergScan deduplication pools
+  uint32 schema_idx = 15;
+  optional uint32 partition_type_idx = 16;
+  optional uint32 partition_spec_idx = 17;
+  optional uint32 name_mapping_idx = 18;
+  uint32 project_field_ids_idx = 19;
+  optional uint32 partition_data_idx = 20;
+  optional uint32 delete_files_idx = 21;
+  optional uint32 residual_idx = 22;
+}
+
+// Iceberg delete file for MOR tables (positional or equality deletes)
+// Positional: (file_path, row_position) pairs to skip
+// Equality: Column values to filter out (specified by equality_ids)
+message IcebergDeleteFile {
+  // Delete file path
+  string file_path = 1;
+
+  // POSITION_DELETES or EQUALITY_DELETES
+  string content_type = 2;
+
+  // Partition spec ID
+  int32 partition_spec_id = 3;
+
+  // Equality field IDs (empty for positional deletes)
+  repeated int32 equality_ids = 4;
+}
+
 message Projection {
   repeated spark.spark_expression.Expr project_list = 1;
 }
@@ -147,6 +229,22 @@ message ShuffleWriter {
   CompressionCodec codec = 5;
   int32 compression_level = 6;
   bool tracing_enabled = 7;
+  // Size of the write buffer in bytes used when writing shuffle data to disk.
+  // Larger values may improve write performance but use more memory.
+  int32 write_buffer_size = 8;
+}
+
+message ParquetWriter {
+  string output_path = 1;
+  CompressionCodec compression = 2;
+  repeated string column_names = 4;
+  // Working directory for temporary files (used by FileCommitProtocol)
+  // If not set, files are written directly to output_path
+  optional string work_dir = 5;
+  // Job ID for tracking this write operation
+  optional string job_id = 6;
+  // Task attempt ID for this specific task
+  optional int32 task_attempt_id = 7;
 }
 
 enum AggregateMode {
@@ -157,6 +255,15 @@ enum AggregateMode {
 message Expand {
   repeated spark.spark_expression.Expr project_list = 1;
   int32 num_expr_per_project = 3;
+}
+
+message Explode {
+  // The array expression to explode into multiple rows
+  spark.spark_expression.Expr child = 1;
+  // Whether this is explode_outer (produces null row for empty/null arrays)
+  bool outer = 2;
+  // Expressions for other columns to project alongside the exploded values
+  repeated spark.spark_expression.Expr project_list = 3;
 }
 
 message HashJoin {

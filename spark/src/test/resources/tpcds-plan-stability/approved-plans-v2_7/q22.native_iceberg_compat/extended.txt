@@ -1,11 +1,11 @@
- TakeOrderedAndProject [COMET: ]
+TakeOrderedAndProject
 +- HashAggregate
    +- CometColumnarToRow
       +- CometColumnarExchange
          +- HashAggregate
             +- Expand
                +- Project
-                  +- BroadcastNestedLoopJoin
+                  +-  BroadcastNestedLoopJoin [COMET: BroadcastNestedLoopJoin is not supported]
                      :- CometColumnarToRow
                      :  +- CometProject
                      :     +- CometBroadcastHashJoin

@@ -273,6 +273,13 @@ abstract class CometTestBase
 
   /** Check for the correct results as well as the expected fallback reasons */
   protected def checkSparkAnswerAndFallbackReasons(
+      query: String,
+      fallbackReasons: Set[String]): (SparkPlan, SparkPlan) = {
+    checkSparkAnswerAndFallbackReasons(sql(query), fallbackReasons)
+  }
+
+  /** Check for the correct results as well as the expected fallback reasons */
+  protected def checkSparkAnswerAndFallbackReasons(
       df: => DataFrame,
       fallbackReasons: Set[String]): (SparkPlan, SparkPlan) = {
     val (sparkPlan, cometPlan) = internalCheckSparkAnswer(df, assertCometNative = false)
@@ -283,7 +290,7 @@ abstract class CometTestBase
         if (actualFallbacks.isEmpty) {
           fail(
             s"Expected fallback reason '$reason' but no fallback reasons were found. Explain: ${explainInfo
-                .generateVerboseExtendedInfo(cometPlan)}")
+                .generateExtendedInfo(cometPlan)}")
         } else {
           fail(
             s"Expected fallback reason '$reason' not found in [${actualFallbacks.mkString(", ")}]")
@@ -299,7 +306,7 @@ abstract class CometTestBase
    * This method does not check that Comet replaced any operators or that the results match in the
    * case where the query is successful against both Spark and Comet.
    */
-  protected def checkSparkMaybeThrows(
+  protected def checkSparkAnswerMaybeThrows(
       df: => DataFrame): (Option[Throwable], Option[Throwable]) = {
     var expected: Try[Array[Row]] = null
     withSQLConf(CometConf.COMET_ENABLED.key -> "false") {
@@ -309,8 +316,8 @@ abstract class CometTestBase
 
     (expected, actual) match {
       case (Success(_), Success(_)) =>
-        // TODO compare results and confirm that they match
-        // https://github.com/apache/datafusion-comet/issues/2657
+        // compare results and confirm that they match
+        checkSparkAnswer(df)
         (None, None)
       case _ =>
         (expected.failed.toOption, actual.failed.toOption)
@@ -375,9 +382,11 @@ abstract class CometTestBase
         assert(
           false,
           s"Expected only Comet native operators, but found ${op.nodeName}.\n" +
-            s"plan: ${new ExtendedExplainInfo().generateVerboseExtendedInfo(plan)}")
+            s"plan: ${new ExtendedExplainInfo().generateExtendedInfo(plan)}")
       case _ =>
     }
+
+    checkPlanNotMissingInput(plan)
   }
 
   protected def findFirstNonCometOperator(
@@ -385,7 +394,8 @@ abstract class CometTestBase
       excludedClasses: Class[_]*): Option[SparkPlan] = {
     val wrapped = wrapCometSparkToColumnar(plan)
     wrapped.foreach {
-      case _: CometNativeScanExec | _: CometScanExec | _: CometBatchScanExec =>
+      case _: CometNativeScanExec | _: CometScanExec | _: CometBatchScanExec |
+          _: CometIcebergNativeScanExec =>
       case _: CometSinkPlaceHolder | _: CometScanWrapper =>
       case _: CometColumnarToRowExec =>
       case _: CometSparkToColumnarExec =>
@@ -397,6 +407,28 @@ abstract class CometTestBase
       case _ =>
     }
     None
+  }
+
+  // checks the plan node has no missing inputs
+  // such nodes represented in plan with exclamation mark !
+  // example: !CometWindowExec
+  protected def checkPlanNotMissingInput(plan: SparkPlan): Unit = {
+    def hasMissingInput(node: SparkPlan): Boolean = {
+      node.missingInput.nonEmpty && node.children.nonEmpty
+    }
+
+    val isCometNode = plan.nodeName.startsWith("Comet")
+
+    if (isCometNode && hasMissingInput(plan)) {
+      assert(
+        false,
+        s"Plan node `${plan.nodeName}` has invalid missingInput: ${plan.missingInput}")
+    }
+
+    // Otherwise recursively check children
+    plan.children.foreach { child =>
+      checkPlanNotMissingInput(child)
+    }
   }
 
   private def checkPlanContains(plan: SparkPlan, includePlans: Class[_]*): Unit = {
@@ -662,7 +694,7 @@ abstract class CometTestBase
 
     val idGenerator = new AtomicInteger(0)
 
-    val rand = scala.util.Random
+    val rand = new scala.util.Random(42)
     val data = (begin until end).map { i =>
       if (nullEnabled && rand.nextBoolean()) {
         None
@@ -756,7 +788,7 @@ abstract class CometTestBase
       rowGroupSize = rowGroupSize)
     val div = if (dictionaryEnabled) 10 else n // maps value to a small range for dict to kick in
 
-    val rand = scala.util.Random
+    val rand = new scala.util.Random(42)
     val expected = (0 until n).map { i =>
       if (rand.nextBoolean()) {
         None
@@ -810,7 +842,7 @@ abstract class CometTestBase
       rowGroupSize = rowGroupSize)
     val div = if (dictionaryEnabled) 10 else n // maps value to a small range for dict to kick in
 
-    val rand = scala.util.Random
+    val rand = new scala.util.Random(42)
     val expected = (0 until n).map { i =>
       if (rand.nextBoolean()) {
         None
@@ -1208,7 +1240,7 @@ abstract class CometTestBase
     val schema = MessageTypeParser.parseMessageType(schemaStr)
     val writer = createParquetWriter(schema, path, dictionaryEnabled = true)
 
-    val rand = scala.util.Random
+    val rand = new scala.util.Random(42)
     val expected = (0 until total).map { i =>
       // use a single value for the first page, to make sure dictionary encoding kicks in
       if (rand.nextBoolean()) None

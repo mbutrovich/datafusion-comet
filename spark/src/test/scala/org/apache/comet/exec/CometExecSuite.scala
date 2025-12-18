@@ -42,14 +42,14 @@ import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ReusedExc
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec, CartesianProductExec, SortMergeJoinExec}
 import org.apache.spark.sql.execution.reuse.ReuseExchangeAndSubquery
 import org.apache.spark.sql.execution.window.WindowExec
-import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.SESSION_LOCAL_TIMEZONE
 import org.apache.spark.unsafe.types.UTF8String
 
-import org.apache.comet.{CometConf, ExtendedExplainInfo}
+import org.apache.comet.{CometConf, CometExecIterator, ExtendedExplainInfo}
 import org.apache.comet.CometSparkSessionExtensions.{isSpark35Plus, isSpark40Plus}
+import org.apache.comet.serde.Config.ConfigMap
 import org.apache.comet.testing.{DataGenOptions, ParquetGenerator, SchemaGenOptions}
 
 class CometExecSuite extends CometTestBase {
@@ -63,6 +63,27 @@ class CometExecSuite extends CometTestBase {
         CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
         CometConf.COMET_NATIVE_SCAN_IMPL.key -> CometConf.SCAN_AUTO) {
         testFun
+      }
+    }
+  }
+
+  test("SQLConf serde") {
+
+    def roundtrip = {
+      val protobuf = CometExecIterator.serializeCometSQLConfs()
+      ConfigMap.parseFrom(protobuf)
+    }
+
+    // test not setting the config
+    val deserialized: ConfigMap = roundtrip
+    assert(null == deserialized.getEntriesMap.get(CometConf.COMET_EXPLAIN_NATIVE_ENABLED.key))
+
+    // test explicitly setting the config
+    for (value <- Seq("true", "false")) {
+      withSQLConf(CometConf.COMET_EXPLAIN_NATIVE_ENABLED.key -> value) {
+        val deserialized: ConfigMap = roundtrip
+        assert(
+          value == deserialized.getEntriesMap.get(CometConf.COMET_EXPLAIN_NATIVE_ENABLED.key))
       }
     }
   }
@@ -119,10 +140,7 @@ class CometExecSuite extends CometTestBase {
           val infos = new ExtendedExplainInfo().generateExtendedInfo(cometPlan)
           assert(infos.contains("Dynamic Partition Pruning is not supported"))
 
-          withSQLConf(CometConf.COMET_EXPLAIN_VERBOSE_ENABLED.key -> "true") {
-            val extendedExplain = new ExtendedExplainInfo().generateExtendedInfo(cometPlan)
-            assert(extendedExplain.contains("Comet accelerated"))
-          }
+          assert(infos.contains("Comet accelerated"))
         }
       }
     }
@@ -314,45 +332,6 @@ class CometExecSuite extends CometTestBase {
     }
   }
 
-  test(
-    "fall back to Spark when the partition spec and order spec are not the same for window function") {
-    withTempView("test") {
-      sql("""
-          |CREATE OR REPLACE TEMPORARY VIEW test_agg AS SELECT * FROM VALUES
-          | (1, true), (1, false),
-          |(2, true), (3, false), (4, true) AS test(k, v)
-          |""".stripMargin)
-
-      val df = sql("""
-          SELECT k, v, every(v) OVER (PARTITION BY k ORDER BY v) FROM test_agg
-          |""".stripMargin)
-      checkSparkAnswer(df)
-    }
-  }
-
-  test("Native window operator should be CometUnaryExec") {
-    withTempView("testData") {
-      sql("""
-          |CREATE OR REPLACE TEMPORARY VIEW testData AS SELECT * FROM VALUES
-          |(null, 1L, 1.0D, date("2017-08-01"), timestamp_seconds(1501545600), "a"),
-          |(1, 1L, 1.0D, date("2017-08-01"), timestamp_seconds(1501545600), "a"),
-          |(1, 2L, 2.5D, date("2017-08-02"), timestamp_seconds(1502000000), "a"),
-          |(2, 2147483650L, 100.001D, date("2020-12-31"), timestamp_seconds(1609372800), "a"),
-          |(1, null, 1.0D, date("2017-08-01"), timestamp_seconds(1501545600), "b"),
-          |(2, 3L, 3.3D, date("2017-08-03"), timestamp_seconds(1503000000), "b"),
-          |(3, 2147483650L, 100.001D, date("2020-12-31"), timestamp_seconds(1609372800), "b"),
-          |(null, null, null, null, null, null),
-          |(3, 1L, 1.0D, date("2017-08-01"), timestamp_seconds(1501545600), null)
-          |AS testData(val, val_long, val_double, val_date, val_timestamp, cate)
-          |""".stripMargin)
-      val df1 = sql("""
-          |SELECT val, cate, count(val) OVER(PARTITION BY cate ORDER BY val ROWS CURRENT ROW)
-          |FROM testData ORDER BY cate, val
-          |""".stripMargin)
-      checkSparkAnswer(df1)
-    }
-  }
-
   test("subquery execution under CometTakeOrderedAndProjectExec should not fail") {
     assume(isSpark35Plus, "SPARK-45584 is fixed in Spark 3.5+")
 
@@ -372,32 +351,6 @@ class CometExecSuite extends CometTestBase {
           |""".stripMargin)
       checkSparkAnswerAndOperator(df)
     }
-  }
-
-  test("Window range frame with long boundary should not fail") {
-    val df =
-      Seq((1L, "1"), (1L, "1"), (2147483650L, "1"), (3L, "2"), (2L, "1"), (2147483650L, "2"))
-        .toDF("key", "value")
-
-    checkSparkAnswer(
-      df.select(
-        $"key",
-        count("key").over(
-          Window.partitionBy($"value").orderBy($"key").rangeBetween(0, 2147483648L))))
-    checkSparkAnswer(
-      df.select(
-        $"key",
-        count("key").over(
-          Window.partitionBy($"value").orderBy($"key").rangeBetween(-2147483649L, 0))))
-  }
-
-  test("Unsupported window expression should fall back to Spark") {
-    checkAnswer(
-      spark.sql("select sum(a) over () from values 1.0, 2.0, 3.0 T(a)"),
-      Row(6.0) :: Row(6.0) :: Row(6.0) :: Nil)
-    checkAnswer(
-      spark.sql("select avg(a) over () from values 1.0, 2.0, 3.0 T(a)"),
-      Row(2.0) :: Row(2.0) :: Row(2.0) :: Nil)
   }
 
   test("fix CometNativeExec.doCanonicalize for ReusedExchangeExec") {
@@ -508,26 +461,6 @@ class CometExecSuite extends CometTestBase {
     }
   }
 
-  test("Repeated shuffle exchange don't fail") {
-    Seq("true", "false").foreach { aqeEnabled =>
-      withSQLConf(
-        SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> aqeEnabled,
-        SQLConf.REQUIRE_ALL_CLUSTER_KEYS_FOR_DISTRIBUTION.key -> "true",
-        CometConf.COMET_SHUFFLE_MODE.key -> "jvm") {
-        val df =
-          Seq(("a", 1, 1), ("a", 2, 2), ("b", 1, 3), ("b", 1, 4)).toDF("key1", "key2", "value")
-        val windowSpec = Window.partitionBy("key1", "key2").orderBy("value")
-
-        val windowed = df
-          // repartition by subset of window partitionBy keys which satisfies ClusteredDistribution
-          .repartition($"key1")
-          .select(lead($"key1", 1).over(windowSpec), lead($"value", 1).over(windowSpec))
-
-        checkSparkAnswer(windowed)
-      }
-    }
-  }
-
   test("try_sum should return null if overflow happens before merging") {
     val longDf = Seq(Long.MaxValue, Long.MaxValue, 2).toDF("v")
     val yearMonthDf = Seq(Int.MaxValue, Int.MaxValue, 2)
@@ -616,8 +549,7 @@ class CometExecSuite extends CometTestBase {
     dataTypes.map { subqueryType =>
       withSQLConf(
         CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
-        CometConf.COMET_SHUFFLE_MODE.key -> "jvm",
-        CometConf.COMET_EXPR_ALLOW_INCOMPATIBLE.key -> "true") {
+        CometConf.COMET_SHUFFLE_MODE.key -> "jvm") {
         withParquetTable((0 until 5).map(i => (i, i + 1)), "tbl") {
           var column1 = s"CAST(max(_1) AS $subqueryType)"
           if (subqueryType == "BINARY") {
@@ -1527,9 +1459,7 @@ class CometExecSuite extends CometTestBase {
   }
 
   test("SPARK-33474: Support typed literals as partition spec values") {
-    withSQLConf(
-      SESSION_LOCAL_TIMEZONE.key -> "Asia/Kathmandu",
-      CometConf.COMET_EXPR_ALLOW_INCOMPATIBLE.key -> "true") {
+    withSQLConf(SESSION_LOCAL_TIMEZONE.key -> "Asia/Kathmandu") {
       withTable("t1") {
         val binaryStr = "Spark SQL"
         val binaryHexStr = Hex.hex(UTF8String.fromString(binaryStr).getBytes).toString
@@ -1651,10 +1581,6 @@ class CometExecSuite extends CometTestBase {
   }
 
   test("bucketed table") {
-    // native_datafusion actually passes this test, but in the case where buckets are pruned it fails, so we're
-    // falling back for bucketed scans entirely as a workaround.
-    // https://github.com/apache/datafusion-comet/issues/1719
-    assume(CometConf.COMET_NATIVE_SCAN_IMPL.get() != CometConf.SCAN_NATIVE_DATAFUSION)
     val bucketSpec = Some(BucketSpec(8, Seq("i", "j"), Nil))
     val bucketedTableTestSpecLeft = BucketedTableTestSpec(bucketSpec, expectedShuffle = false)
     val bucketedTableTestSpecRight = BucketedTableTestSpec(bucketSpec, expectedShuffle = false)
@@ -1663,6 +1589,30 @@ class CometExecSuite extends CometTestBase {
       bucketedTableTestSpecLeft = bucketedTableTestSpecLeft,
       bucketedTableTestSpecRight = bucketedTableTestSpecRight,
       joinCondition = joinCondition(Seq("i", "j")))
+  }
+
+  test("bucketed table with bucket pruning") {
+    withSQLConf(
+      SQLConf.BUCKETING_ENABLED.key -> "true",
+      SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "0") {
+      val df1 = (0 until 100).map(i => (i, i % 13, s"left_$i")).toDF("id", "bucket_col", "value")
+      val df2 = (0 until 100).map(i => (i, i % 13, s"right_$i")).toDF("id", "bucket_col", "value")
+      val bucketSpec = Some(BucketSpec(8, Seq("bucket_col"), Nil))
+
+      withTable("bucketed_table1", "bucketed_table2") {
+        withBucket(df1.write.format("parquet"), bucketSpec).saveAsTable("bucketed_table1")
+        withBucket(df2.write.format("parquet"), bucketSpec).saveAsTable("bucketed_table2")
+
+        // Join two bucketed tables, but filter one side to trigger bucket pruning
+        // Only buckets where hash(bucket_col) % 8 matches hash(1) % 8 will be read from left side
+        val left = spark.table("bucketed_table1").filter("bucket_col = 1")
+        val right = spark.table("bucketed_table2")
+
+        val result = left.join(right, Seq("bucket_col"), "inner")
+
+        checkSparkAnswerAndOperator(result)
+      }
+    }
   }
 
   def withBucket(
@@ -1783,13 +1733,15 @@ class CometExecSuite extends CometTestBase {
 
   test("TakeOrderedAndProjectExec") {
     Seq("true", "false").foreach(aqeEnabled =>
-      withSQLConf(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> aqeEnabled) {
+      withSQLConf(
+        SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> aqeEnabled,
+        CometConf.COMET_EXEC_WINDOW_ENABLED.key -> "true") {
         withTable("t1") {
           val numRows = 10
           spark
             .range(numRows)
             .selectExpr("if (id % 2 = 0, null, id) AS a", s"$numRows - id AS b")
-            .repartition(3) // Force repartition to test data will come to single partition
+            .repartition(3) // Move data across multiple partitions
             .write
             .saveAsTable("t1")
 
@@ -2060,91 +2012,6 @@ class CometExecSuite extends CometTestBase {
     }
   }
 
-  test("aggregate window function for all types") {
-    val numValues = 2048
-
-    Seq(1, 100, numValues).foreach { numGroups =>
-      Seq(true, false).foreach { dictionaryEnabled =>
-        withTempPath { dir =>
-          val path = new Path(dir.toURI.toString, "test.parquet")
-          makeParquetFile(path, numValues, numGroups, dictionaryEnabled)
-          withParquetTable(path.toUri.toString, "tbl") {
-            Seq(128, numValues + 100).foreach { batchSize =>
-              withSQLConf(CometConf.COMET_BATCH_SIZE.key -> batchSize.toString) {
-                (1 to 11).foreach { col =>
-                  val aggregateFunctions =
-                    List(s"COUNT(_$col)", s"MAX(_$col)", s"MIN(_$col)", s"SUM(_$col)")
-                  aggregateFunctions.foreach { function =>
-                    val df1 = sql(s"SELECT $function OVER() FROM tbl")
-                    checkSparkAnswerWithTolerance(df1, 1e-6)
-
-                    val df2 = sql(s"SELECT $function OVER(order by _2) FROM tbl")
-                    checkSparkAnswerWithTolerance(df2, 1e-6)
-
-                    val df3 = sql(s"SELECT $function OVER(order by _2 desc) FROM tbl")
-                    checkSparkAnswerWithTolerance(df3, 1e-6)
-
-                    val df4 = sql(s"SELECT $function OVER(partition by _2 order by _2) FROM tbl")
-                    checkSparkAnswerWithTolerance(df4, 1e-6)
-                  }
-                }
-
-                // SUM doesn't work for Date type. org.apache.spark.sql.AnalysisException will be thrown.
-                val aggregateFunctionsWithoutSum = List("COUNT(_12)", "MAX(_12)", "MIN(_12)")
-                aggregateFunctionsWithoutSum.foreach { function =>
-                  val df1 = sql(s"SELECT $function OVER() FROM tbl")
-                  checkSparkAnswerWithTolerance(df1, 1e-6)
-
-                  val df2 = sql(s"SELECT $function OVER(order by _2) FROM tbl")
-                  checkSparkAnswerWithTolerance(df2, 1e-6)
-
-                  val df3 = sql(s"SELECT $function OVER(order by _2 desc) FROM tbl")
-                  checkSparkAnswerWithTolerance(df3, 1e-6)
-
-                  val df4 = sql(s"SELECT $function OVER(partition by _2 order by _2) FROM tbl")
-                  checkSparkAnswerWithTolerance(df4, 1e-6)
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  test("Windows support") {
-    Seq("true", "false").foreach(aqeEnabled =>
-      withSQLConf(
-        CometConf.COMET_EXEC_SHUFFLE_ENABLED.key -> "true",
-        SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> aqeEnabled) {
-        withParquetTable((0 until 10).map(i => (i, 10 - i)), "t1") { // TODO: test nulls
-          val aggregateFunctions =
-            List(
-              "COUNT(_1)",
-              "COUNT(*)",
-              "MAX(_1)",
-              "MIN(_1)",
-              "SUM(_1)"
-            ) // TODO: Test all the aggregates
-
-          aggregateFunctions.foreach { function =>
-            val queries = Seq(
-              s"SELECT $function OVER() FROM t1",
-              s"SELECT $function OVER(order by _2) FROM t1",
-              s"SELECT $function OVER(order by _2 desc) FROM t1",
-              s"SELECT $function OVER(partition by _2 order by _2) FROM t1",
-              s"SELECT $function OVER(rows between 1 preceding and 1 following) FROM t1",
-              s"SELECT $function OVER(order by _2 rows between 1 preceding and current row) FROM t1",
-              s"SELECT $function OVER(order by _2 rows between current row and 1 following) FROM t1")
-
-            queries.foreach { query =>
-              checkSparkAnswerAndOperator(query)
-            }
-          }
-        }
-      })
-  }
-
   test("read CSV file") {
     Seq("", "csv").foreach { v1List =>
       withSQLConf(
@@ -2274,6 +2141,32 @@ class CometExecSuite extends CometTestBase {
         assert(nodeNames.length == 1)
         assert(nodeNames.head == "CometSparkColumnarToColumnar")
       }
+    }
+  }
+
+  test("LocalTableScanExec spark fallback") {
+    withSQLConf(CometConf.COMET_EXEC_LOCAL_TABLE_SCAN_ENABLED.key -> "false") {
+      val df = Seq.range(0, 10).toDF("id")
+      checkSparkAnswerAndFallbackReason(
+        df,
+        "Native support for operator LocalTableScanExec is disabled")
+    }
+  }
+
+  test("LocalTableScanExec with filter") {
+    withSQLConf(CometConf.COMET_EXEC_LOCAL_TABLE_SCAN_ENABLED.key -> "true") {
+      val df = Seq.range(0, 10).toDF("id").filter(col("id") > 5)
+      checkSparkAnswerAndOperator(df)
+    }
+  }
+
+  test("LocalTableScanExec with groupBy") {
+    withSQLConf(CometConf.COMET_EXEC_LOCAL_TABLE_SCAN_ENABLED.key -> "true") {
+      val df = (Seq.range(0, 10) ++ Seq.range(0, 20))
+        .toDF("id")
+        .groupBy(col("id"))
+        .agg(count("*"))
+      checkSparkAnswerAndOperator(df)
     }
   }
 

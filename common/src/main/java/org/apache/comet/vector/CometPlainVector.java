@@ -134,6 +134,7 @@ public class CometPlainVector extends CometDecodedVector {
 
   @Override
   public UTF8String getUTF8String(int rowId) {
+      if (isNullAt(rowId)) return null;
     switch (CometVectorType) {
       case BaseVariableWidthVector:
         {
@@ -179,6 +180,7 @@ public class CometPlainVector extends CometDecodedVector {
 
   @Override
   public byte[] getBinary(int rowId) {
+    if (isNullAt(rowId)) return null;
     int offset;
     int length;
 
