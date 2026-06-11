@@ -53,7 +53,7 @@ zstd = "0.13.3"
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["async", "async_tokio", "async_std"] }
-datafusion = { workspace = true, features = ["parquet_encryption", "sql"] }
+datafusion = { workspace = true, features = ["parquet_encryption"] }
 itertools = "0.14.0"
 tempfile = "3.26.0"
 

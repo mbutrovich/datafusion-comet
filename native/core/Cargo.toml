@@ -53,7 +53,7 @@ bytes = { workspace = true }
 tempfile = "3.26.0"
 itertools = "0.14.0"
 paste = "1.0.14"
-datafusion = { workspace = true, features = ["parquet_encryption", "sql"] }
+datafusion = { workspace = true, features = ["parquet_encryption"] }
 datafusion-physical-expr-adapter = { workspace = true }
 datafusion-datasource = { workspace = true }
 datafusion-spark = { workspace = true }
@@ -93,6 +93,7 @@ lazy_static = "1.4"
 assertables = "10"
 hex = "0.4.3"
 datafusion-functions-nested = { version = "53.1.0" }
+datafusion = { workspace = true, features = ["sql"] }
 
 [features]
 backtrace = ["datafusion/backtrace"]
