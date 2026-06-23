@@ -16,6 +16,7 @@
 // under the License.
 
 pub mod encryption_support;
+pub mod instrumented_reader;
 
 pub mod parquet_exec;
 pub mod parquet_support;
