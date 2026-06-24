@@ -78,3 +78,10 @@ codegen-units = 16   # Parallel codegen (faster compile, slightly larger binary)
 debug-assertions = true
 panic = "unwind"     # Allow panics to be caught and logged across FFI boundary
 # overflow-checks inherited as false from release
+
+[patch.crates-io]
+datafusion = { git = "https://github.com/mbutrovich/datafusion", branch = "instrument" }
+datafusion-datasource = { git = "https://github.com/mbutrovich/datafusion", branch = "instrument" }
+datafusion-datasource-parquet = { git = "https://github.com/mbutrovich/datafusion", branch = "instrument" }
+datafusion-physical-expr-adapter = { git = "https://github.com/mbutrovich/datafusion", branch = "instrument" }
+datafusion-spark = { git = "https://github.com/mbutrovich/datafusion", branch = "instrument" }

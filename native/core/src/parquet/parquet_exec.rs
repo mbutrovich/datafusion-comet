@@ -17,6 +17,7 @@
 
 use crate::execution::operators::ExecutionError;
 use crate::parquet::encryption_support::{CometEncryptionConfig, ENCRYPTION_FACTORY_ID};
+use crate::parquet::instrumented_object_store::InstrumentedObjectStore;
 use crate::parquet::instrumented_reader::InstrumentedReaderFactory;
 use crate::parquet::parquet_support::SparkParquetOptions;
 use crate::parquet::schema_adapter::SparkPhysicalExprAdapterFactory;
@@ -151,8 +152,12 @@ pub(crate) fn init_datasource_exec(
     // wrapper would surface it.
     let runtime_env = session_ctx.runtime_env();
     let store = runtime_env.object_store(&object_store_url)?;
+    let instrumented_store = Arc::new(InstrumentedObjectStore::new(store));
     let metadata_cache = runtime_env.cache_manager.get_file_metadata_cache();
-    let cached_factory = Arc::new(CachedParquetFileReaderFactory::new(store, metadata_cache));
+    let cached_factory = Arc::new(CachedParquetFileReaderFactory::new(
+        instrumented_store,
+        metadata_cache,
+    ));
     parquet_source = parquet_source
         .with_parquet_file_reader_factory(Arc::new(InstrumentedReaderFactory::new(cached_factory)));
 
