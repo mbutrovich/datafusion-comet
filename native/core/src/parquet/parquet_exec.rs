@@ -132,8 +132,16 @@ pub(crate) fn init_datasource_exec(
     let table_schema =
         TableSchema::from_file_schema(base_schema).with_table_partition_cols(partition_fields);
 
-    let mut parquet_source =
-        ParquetSource::new(table_schema).with_table_parquet_options(table_parquet_options);
+    let mut parquet_source = ParquetSource::new(table_schema)
+        .with_table_parquet_options(table_parquet_options)
+        // Without this, the parquet metadata loader does 3 sequential S3
+        // round trips per file (8B footer length, then ~5KB footer, then page
+        // index). With a 512KB suffix prefetch the first request typically
+        // covers the footer + page index in one shot. Matches iceberg-rust
+        // and DataFusion's `datafusion.execution.parquet.metadata_size_hint`
+        // default. ParquetSource::with_table_parquet_options does NOT pull
+        // this from `global.metadata_size_hint`, so it has to be set here.
+        .with_metadata_size_hint(512 * 1024);
 
     if encryption_enabled {
         parquet_source = parquet_source.with_encryption_factory(
